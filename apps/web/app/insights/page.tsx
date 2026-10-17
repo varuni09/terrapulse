@@ -1,6 +1,4 @@
 import React from "react";
-import AiAnalyst from "../components/AiAnalyst";
-import AnalyticsPanel from "../components/AnalyticsPanel";
 
 export default function InsightsPage() {
   return (
@@ -14,16 +12,8 @@ export default function InsightsPage() {
             Evidence & Grounded Analytics
           </h1>
           <p className="text-sm text-slate-400 mt-2">
-            Inspect satellite-verified correlations, temperature distributions, and query the live AI analyst backed by real telemetry feeds.
+            Inspect satellite-verified correlations and temperature distributions backed by real telemetry feeds.
           </p>
-        </div>
-
-        {/* Analytics Distribution & Metrics */}
-        <AnalyticsPanel />
-
-        {/* Grounded AI Analyst Section */}
-        <div className="grid grid-cols-1 gap-8">
-          <AiAnalyst />
         </div>
       </div>
     </main>
