@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+psycopg[binary]
+numpy
+rasterio
+geopandas
+pytest
+httpx
+h3
+pystac-client
+planetary-computer

@@ -1,0 +1,885 @@
+﻿"use client";
+
+import { useCallback, useEffect, useRef, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import Navbar from "../components/Navbar";
+import AiAnalyst from "../components/AiAnalyst";
+import maplibregl from "maplibre-gl";
+import "maplibre-gl/dist/maplibre-gl.css";
+import { Fraunces, JetBrains_Mono } from "next/font/google";
+import * as oceanWavesModule from "../../lib/oceanWaves";
+import { NDVI_MAX, PALETTES, RANGES, RANGE_ORDER, equityScore, type LayerId, type RangeId } from "../../lib/gee-config";
+
+const createOceanWaves =
+  (oceanWavesModule as any).createOceanWaves ?? (() => ({ destroy() {}, setEnabled() {}, setSeaState() {} }));
+
+const display = Fraunces({ subsets: ["latin"], variable: "--font-display" });
+const mono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-mono" });
+
+/* ───────────────────────── types ───────────────────────── */
+
+type Layer = LayerId;
+type ViewMode = "cinematic" | "flat" | "street";
+
+type Sel = {
+  lat: number;
+  lon: number;
+  lst: number | null;
+  ndvi: number | null;
+  equity: number | null;
+  air: { temp: number; humidity: number | null; time: string } | null;
+  airState: "loading" | "ok" | "error";
+  name?: string;
+  state: "loading" | "ok" | "nodata" | "error";
+};
+
+type Place = {
+  id?: number;
+  name: string;
+  admin1?: string;
+  country?: string;
+  latitude: number;
+  longitude: number;
+};
+
+type Period = { start: string; end: string };
+type GeeStatus = { state: "idle" | "loading" | "ready" | "throttled" | "error"; message?: string };
+
+type EarthEngineSample = {
+  latitude: number;
+  longitude: number;
+  data: { lst_c?: number | null; ndvi?: number | null } | null;
+  note?: string;
+};
+
+/* ───────────────────────── constants ───────────────────────── */
+
+const RAMPS = PALETTES;
+const LABELS: Record<Layer, string> = { lst: "Surface temp", ndvi: "Vegetation", equity: "Heat Equity Risk" };
+
+const GLASS =
+  "bg-[#04091f]/80 backdrop-blur-2xl border border-white/10 shadow-[0_8px_40px_rgba(0,0,0,.5),inset_0_1px_0_rgba(255,255,255,.09)] rounded-2xl";
+
+const GEE_SRC = "gee-src";
+const GEE_LYR = "gee-layer";
+const GEE_MAX_ZOOM = 10; // with 512px tiles this is roughly zoom 11 detail; deeper tiles hit Earth Engine quotas fast
+const MAX_AUTO_RETRIES = 3;
+
+/* ───────────────────────── helpers ───────────────────────── */
+
+const clamp = (x: number, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const rgb = (h: string) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+
+function ramp(t: number, cols: string[]) {
+  const x = clamp(t) * (cols.length - 1);
+  const i = Math.min(cols.length - 2, Math.floor(x));
+  const f = x - i;
+  const a = rgb(cols[i]);
+  const b = rgb(cols[i + 1]);
+  return "#" + a.map((v, k) => Math.round(v + (b[k] - v) * f).toString(16).padStart(2, "0")).join("");
+}
+
+function legendBounds(layer: Layer, range: RangeId): [string, string] {
+  if (layer === "lst") return [`${RANGES[range].lstMin}°C`, `${RANGES[range].lstMax}°C`];
+  if (layer === "ndvi") return ["0.00", NDVI_MAX.toFixed(2)];
+  return ["0", "100"];
+}
+
+async function fetchTileUrl(layer: Layer, range: RangeId): Promise<{ url: string; period: Period }> {
+  const res = await fetch(`/api/gee/tiles?layer=${layer}&range=${range}`);
+  const text = await res.text();
+  let json: any = null;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    /* not JSON */
+  }
+  if (!res.ok) {
+    throw new Error(json?.detail || json?.error || json?.message || `HTTP ${res.status}: ${text.slice(0, 140)}`);
+  }
+  const url = json?.tileUrl ?? json?.urlFormat;
+  if (typeof url !== "string" || !url) throw new Error("The tiles route returned no tileUrl.");
+  if (!url.includes("{z}") || !url.includes("{x}") || !url.includes("{y}")) {
+    throw new Error("tileUrl must contain {z}/{x}/{y} placeholders.");
+  }
+  return { url, period: json?.period ?? { start: "", end: "" } };
+}
+
+async function fetchEarthEngineSample(
+  lat: number,
+  lon: number,
+  range: RangeId,
+  signal?: AbortSignal
+): Promise<EarthEngineSample> {
+  const res = await fetch(
+    `/api/gee/sample?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&range=${range}`,
+    { signal }
+  );
+  if (!res.ok) throw new Error(`Earth Engine sample failed (${res.status})`);
+  return res.json();
+}
+
+/** Current air temperature at 2 m from Open-Meteo (free, no key). */
+async function fetchAirNow(lat: number, lon: number, signal?: AbortSignal) {
+  const res = await fetch(
+    `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m&timezone=auto`,
+    { signal }
+  );
+  if (!res.ok) throw new Error(`Air temperature failed (${res.status})`);
+  const d = await res.json();
+  const c = d?.current;
+  if (!c || typeof c.temperature_2m !== "number") throw new Error("No current weather returned");
+  return {
+    temp: c.temperature_2m as number,
+    humidity: typeof c.relative_humidity_2m === "number" ? (c.relative_humidity_2m as number) : null,
+    time: String(c.time ?? ""),
+  };
+}
+
+async function geocode(q: string): Promise<Place | null> {
+  try {
+    const r = await fetch(
+      `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}&count=1&language=en&format=json`
+    );
+    const d = await r.json();
+    if (d.results?.length) return d.results[0];
+  } catch {
+    /* fall through */
+  }
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(q)}`);
+    const d = await r.json();
+    if (d.length) return { name: d[0].display_name.split(",")[0], latitude: +d[0].lat, longitude: +d[0].lon };
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+/* ───────────────────────── component ───────────────────────── */
+
+export default function ExplorePage() {
+  const box = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<maplibregl.Map | null>(null);
+  const markerRef = useRef<maplibregl.Marker | null>(null);
+  const beforeIdRef = useRef<string | undefined>(undefined);
+  const urlCache = useRef<Record<string, { url: string; period: Period }>>({});
+  const activeGee = useRef<string | null>(null);
+  const geeSeq = useRef(0);
+  const sampleAbort = useRef<AbortController | null>(null);
+  const retryN = useRef(0);
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const wavesRef = useRef<ReturnType<typeof createOceanWaves> | null>(null);
+
+  const [mapReady, setMapReady] = useState(false);
+  const [layer, setLayer] = useState<Layer>("lst");
+  const [range, setRange] = useState<RangeId>("30d");
+  const [orbit, setOrbit] = useState(false);
+  const [sel, setSel] = useState<Sel | null>(null);
+  const [viewMode, setViewMode] = useState<ViewMode>("cinematic");
+  const [gee, setGee] = useState<GeeStatus>({ state: "idle" });
+  const [geePeriod, setGeePeriod] = useState<Period | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [results, setResults] = useState<Place[]>([]);
+  const [open, setOpen] = useState(false);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState("");
+  const [waves, setWaves] = useState(true);
+  const [sea, setSea] = useState("");
+
+  const rangeRef = useRef<RangeId>(range);
+  rangeRef.current = range;
+  const selRef = useRef<Sel | null>(sel);
+  selRef.current = sel;
+
+  /* ── re-request tiles after a rate limit (same map id, so no new Earth Engine computation is queued) ── */
+  const retryTiles = useCallback(() => {
+    const m = mapRef.current;
+    const key = activeGee.current;
+    const base = key ? urlCache.current[key]?.url : undefined;
+    const src = m?.getSource(GEE_SRC) as any;
+    if (!m || !base || !src || typeof src.setTiles !== "function") return;
+    retryN.current += 1;
+    src.setTiles([`${base}${base.includes("?") ? "&" : "?"}r=${retryN.current}`]);
+  }, []);
+
+  /* ── show an Earth Engine layer for a time range (adds the source on first use, swaps tiles after) ── */
+  const showGee = useCallback(async (l: Layer, rg: RangeId, force = false) => {
+    const m = mapRef.current;
+    if (!m) return;
+    const key = `${l}:${rg}`;
+    if (!force && activeGee.current === key && m.getLayer(GEE_LYR)) return;
+
+    const seq = ++geeSeq.current;
+    retryN.current = 0;
+    clearTimeout(retryTimer.current);
+    setGee({ state: "loading" });
+
+    try {
+      if (force) delete urlCache.current[key];
+      let entry = urlCache.current[key];
+      if (!entry) {
+        entry = await fetchTileUrl(l, rg);
+        urlCache.current[key] = entry;
+      }
+      if (seq !== geeSeq.current || mapRef.current !== m) return; // a newer request replaced this one
+
+      const existing = m.getSource(GEE_SRC) as any;
+      if (existing && typeof existing.setTiles === "function") {
+        existing.setTiles([entry.url]);
+      } else {
+        if (m.getLayer(GEE_LYR)) m.removeLayer(GEE_LYR);
+        if (m.getSource(GEE_SRC)) m.removeSource(GEE_SRC);
+        m.addSource(GEE_SRC, { type: "raster", tiles: [entry.url], tileSize: 512, maxzoom: GEE_MAX_ZOOM });
+        m.addLayer(
+          {
+            id: GEE_LYR,
+            type: "raster",
+            source: GEE_SRC,
+            paint: { "raster-opacity": 0.85, "raster-fade-duration": 150, "raster-resampling": "linear" },
+          },
+          beforeIdRef.current
+        );
+      }
+      activeGee.current = key;
+      setGeePeriod(entry.period);
+    } catch (err: any) {
+      if (seq !== geeSeq.current) return;
+      console.error("Earth Engine layer failed:", err);
+      setGee({ state: "error", message: err?.message ?? "Unknown error" });
+    }
+  }, []);
+
+  const placeMarker = useCallback((lng: number, lat: number) => {
+    const m = mapRef.current;
+    if (!m) return;
+    markerRef.current?.remove();
+    const el = document.createElement("div");
+    el.style.cssText =
+      "width:18px;height:18px;border-radius:50%;border:2px solid #2ee6c5;box-shadow:0 0 14px #2ee6c5;background:rgba(46,230,197,.25);pointer-events:none";
+    markerRef.current = new maplibregl.Marker({ element: el }).setLngLat([lng, lat]).addTo(m);
+  }, []);
+
+  /* ── satellite values (for the current time range) + live air temperature for one point ── */
+  const loadPoint = useCallback((lat: number, lng: number) => {
+    sampleAbort.current?.abort();
+    const ctrl = new AbortController();
+    sampleAbort.current = ctrl;
+    const rg = rangeRef.current;
+    const same = (cur: Sel | null) => !!cur && cur.lat === lat && cur.lon === lng;
+
+    setSel((cur) =>
+      same(cur) ? { ...cur!, state: "loading", lst: null, ndvi: null, equity: null } : cur
+    );
+
+    fetchEarthEngineSample(lat, lng, rg, ctrl.signal)
+      .then((real) => {
+        const lst = real.data?.lst_c ?? null;
+        const ndvi = real.data?.ndvi ?? null;
+        setSel((cur) =>
+          same(cur)
+            ? {
+                ...cur!,
+                lst,
+                ndvi,
+                equity: equityScore(lst, ndvi, rg),
+                state: lst == null && ndvi == null ? "nodata" : "ok",
+              }
+            : cur
+        );
+      })
+      .catch((err) => {
+        if (err?.name === "AbortError") return;
+        console.error("Satellite sample failed:", err);
+        setSel((cur) => (same(cur) ? { ...cur!, state: "error" } : cur));
+      });
+
+    fetchAirNow(lat, lng, ctrl.signal)
+      .then((air) => setSel((cur) => (same(cur) ? { ...cur!, air, airState: "ok" } : cur)))
+      .catch((err) => {
+        if (err?.name === "AbortError") return;
+        setSel((cur) => (same(cur) ? { ...cur!, air: null, airState: "error" } : cur));
+      });
+  }, []);
+
+  /* ── init map once ── */
+  useEffect(() => {
+    if (!box.current || mapRef.current) return;
+
+    const map = new maplibregl.Map({
+      container: box.current,
+      style: "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
+      center: [78.9629, 22.0],
+      zoom: 4.8,
+      pitch: 40,
+      bearing: -15,
+      maxPitch: 70,
+      renderWorldCopies: false,
+    });
+
+    map.addControl(new maplibregl.NavigationControl({ showCompass: true }), "top-right");
+
+    map.on("load", () => {
+      // keep satellite tiles under the labels (and under water so oceans stay dark)
+      const layers = map.getStyle().layers ?? [];
+      const firstSymbol = layers.find((l) => l.type === "symbol")?.id;
+      beforeIdRef.current = map.getLayer("water") ? "water" : firstSymbol;
+      map.getCanvas().style.cursor = "crosshair";
+      wavesRef.current = createOceanWaves(maplibregl, map);
+      setMapReady(true);
+    });
+
+    // loading → ready when the first tiles arrive
+    map.on("sourcedata", (e: any) => {
+      if (e.sourceId === GEE_SRC && e.isSourceLoaded) {
+        retryN.current = 0;
+        setGee((g) => (g.state === "loading" || g.state === "throttled" ? { state: "ready" } : g));
+      }
+    });
+    map.on("error", (e: any) => {
+      if (e?.sourceId !== GEE_SRC) return;
+      const err = e?.error;
+      const msg: string = err?.message ?? "Tile request failed";
+      const throttled = err?.status === 429 || /\b429\b/.test(msg);
+      console.warn("Earth Engine tile error:", err);
+
+      if (throttled) {
+        // Earth Engine is rate-limiting us: back off and re-request, up to a few times.
+        setGee((g) => (g.state === "ready" ? g : { state: "throttled", message: msg }));
+        if (retryN.current < MAX_AUTO_RETRIES) {
+          clearTimeout(retryTimer.current);
+          retryTimer.current = setTimeout(retryTiles, 3000 * Math.pow(2, retryN.current));
+        } else {
+          setGee((g) =>
+            g.state === "ready"
+              ? g
+              : { state: "error", message: `Earth Engine keeps returning 429 (quota or rate limit). ${msg}` }
+          );
+        }
+        return;
+      }
+      setGee((g) => (g.state === "loading" ? { state: "error", message: `Tiles failed to load: ${msg}` } : g));
+    });
+
+    /* click → real satellite values + live air temperature for that point */
+    map.on("click", async (e) => {
+      const { lat, lng } = e.lngLat;
+      placeMarker(lng, lat);
+      setSel({
+        lat,
+        lon: lng,
+        lst: null,
+        ndvi: null,
+        equity: null,
+        air: null,
+        airState: "loading",
+        name: "Locating…",
+        state: "loading",
+      });
+      loadPoint(lat, lng);
+
+      const same = (cur: Sel | null) => !!cur && cur.lat === lat && cur.lon === lng;
+      try {
+        const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&zoom=10&lat=${lat}&lon=${lng}`);
+        if (!r.ok) throw new Error("reverse geocoding failed");
+        const d = await r.json();
+        const a = d.address ?? {};
+        const place = a.city ?? a.town ?? a.village ?? a.suburb ?? a.county ?? a.state_district ?? d.name;
+        const label = [place, a.state].filter(Boolean).join(", ") || "Open water / unnamed area";
+        setSel((cur) => (same(cur) ? { ...cur!, name: label } : cur));
+      } catch {
+        setSel((cur) => (same(cur) ? { ...cur!, name: "Selected point" } : cur));
+      }
+    });
+
+    mapRef.current = map;
+    return () => {
+      sampleAbort.current?.abort();
+      clearTimeout(retryTimer.current);
+      markerRef.current?.remove();
+      wavesRef.current?.destroy();
+      wavesRef.current = null;
+      map.remove();
+      mapRef.current = null;
+      activeGee.current = null;
+    };
+  }, [placeMarker, retryTiles, loadPoint]);
+
+  /* ── layer or time range change → swap Earth Engine tiles ── */
+  useEffect(() => {
+    if (!mapReady) return;
+    showGee(layer, range);
+  }, [layer, range, mapReady, showGee]);
+
+  /* ── time range change → re-read the selected point for the new period ── */
+  useEffect(() => {
+    const s = selRef.current;
+    if (s) loadPoint(s.lat, s.lon);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [range]);
+
+  /* ── ocean waves on/off ── */
+  useEffect(() => {
+    if (mapReady) wavesRef.current?.setEnabled(waves);
+  }, [waves, mapReady]);
+
+  /* ── real sea state at the view centre drives wave direction, size and speed ── */
+  useEffect(() => {
+    const m = mapRef.current;
+    if (!m || !mapReady) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let ctrl: AbortController | null = null;
+    const update = () => {
+      clearTimeout(timer);
+      timer = setTimeout(async () => {
+        const c = m.getCenter();
+        ctrl?.abort();
+        ctrl = new AbortController();
+        try {
+          const r = await fetch(
+            `https://marine-api.open-meteo.com/v1/marine?latitude=${c.lat.toFixed(2)}&longitude=${c.lng.toFixed(2)}&current=wave_height,wave_direction,wave_period`,
+            { signal: ctrl.signal }
+          );
+          const k = (await r.json())?.current;
+          if (k && typeof k.wave_height === "number" && typeof k.wave_direction === "number") {
+            const period = typeof k.wave_period === "number" ? k.wave_period : 8;
+            wavesRef.current?.setSeaState({ height: k.wave_height, fromDeg: k.wave_direction, periodS: period });
+            setSea(`${k.wave_height.toFixed(1)} m · ${period.toFixed(0)} s · from ${Math.round(k.wave_direction)}°`);
+          } else setSea("");
+        } catch (e: any) {
+          if (e?.name !== "AbortError") setSea("");
+        }
+      }, 900);
+    };
+    m.on("moveend", update);
+    update();
+    return () => {
+      clearTimeout(timer);
+      ctrl?.abort();
+      m.off("moveend", update);
+    };
+  }, [mapReady]);
+
+  /* ── orbit ── */
+  useEffect(() => {
+    const m = mapRef.current;
+    if (!m || !mapReady || !orbit) return;
+    let raf = 0;
+    const spin = () => {
+      m.setBearing(m.getBearing() + 0.15);
+      raf = requestAnimationFrame(spin);
+    };
+    raf = requestAnimationFrame(spin);
+    return () => cancelAnimationFrame(raf);
+  }, [orbit, mapReady]);
+
+  /* ── search suggestions ── */
+  useEffect(() => {
+    const q = searchQuery.trim();
+    if (q.length < 2) {
+      setResults([]);
+      return;
+    }
+    const ctrl = new AbortController();
+    const t = setTimeout(async () => {
+      try {
+        setSearching(true);
+        const r = await fetch(
+          `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}&count=6&language=en&format=json`,
+          { signal: ctrl.signal }
+        );
+        const d = await r.json();
+        setResults(d.results ?? []);
+        setOpen(true);
+      } catch (e: any) {
+        if (e?.name !== "AbortError") setResults([]);
+      } finally {
+        setSearching(false);
+      }
+    }, 300);
+    return () => {
+      clearTimeout(t);
+      ctrl.abort();
+    };
+  }, [searchQuery]);
+
+  const goTo = (p: Place) => {
+    const m = mapRef.current;
+    if (!m) return;
+    setOpen(false);
+    setSearchError("");
+    setSearchQuery([p.name, p.admin1].filter(Boolean).join(", "));
+    placeMarker(p.longitude, p.latitude);
+    setOrbit(false);
+    m.flyTo({
+      center: [p.longitude, p.latitude],
+      zoom: 10.5,
+      pitch: viewMode === "flat" ? 0 : viewMode === "street" ? 68 : 50,
+      duration: 2600,
+    });
+  };
+
+  const handleSearch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const q = searchQuery.trim();
+    if (!q) return;
+    setSearching(true);
+    setSearchError("");
+    const top = (results.length && results[0]) || (await geocode(q));
+    setSearching(false);
+    if (top) goTo(top);
+    else setSearchError("No place found");
+  };
+
+  const applyViewMode = (mode: ViewMode) => {
+    setViewMode(mode);
+    const m = mapRef.current;
+    if (!m) return;
+    if (mode === "flat") m.easeTo({ pitch: 0, bearing: 0, duration: 1200 });
+    if (mode === "cinematic") m.easeTo({ pitch: 45, bearing: -20, duration: 1200 });
+    if (mode === "street") m.easeTo({ pitch: 68, bearing: 35, duration: 1200 });
+  };
+
+  const riskLabel = (v: number) => (v >= 70 ? "Severe" : v >= 50 ? "High" : v >= 30 ? "Moderate" : "Low");
+
+  const R = RANGES[range];
+  const [legendLo, legendHi] = legendBounds(layer, range);
+
+  const bars: { key: Layer; label: string; text: string; pct: number }[] = sel
+    ? [
+        {
+          key: "lst",
+          label: "Surface Temp",
+          text: sel.lst != null ? `${sel.lst.toFixed(1)}°C` : "—",
+          pct: sel.lst != null ? (sel.lst - R.lstMin) / (R.lstMax - R.lstMin) : 0,
+        },
+        {
+          key: "ndvi",
+          label: "Vegetation (NDVI)",
+          text: sel.ndvi != null ? sel.ndvi.toFixed(2) : "—",
+          pct: sel.ndvi != null ? sel.ndvi / NDVI_MAX : 0,
+        },
+        {
+          key: "equity",
+          label: "Heat Equity Risk",
+          text: sel.equity != null ? `${sel.equity} / 100 · ${riskLabel(sel.equity)}` : "—",
+          pct: sel.equity != null ? sel.equity / 100 : 0,
+        },
+      ]
+    : [];
+
+  const stateLine: Record<Sel["state"], { text: string; cls: string }> = {
+    loading: { text: "Reading satellite data…", cls: "text-amber-300" },
+    ok: { text: `Satellite · ${R.label}`, cls: "text-[#2ee6c5]" },
+    nodata: { text: "No data here (cloud cover or open water)", cls: "text-slate-400" },
+    error: { text: "Satellite request failed", cls: "text-rose-300" },
+  };
+
+  return (
+    <main
+      className={`relative min-h-screen overflow-hidden bg-[#02061a] pt-16 font-mono text-slate-100 ${display.variable} ${mono.variable}`}
+    >
+      <Navbar />
+      <div className="relative h-[calc(100vh-64px)] w-full">
+        <div ref={box} style={{ position: "absolute", inset: 0, zIndex: 10 }} />
+        <div className="pointer-events-none absolute inset-0 z-20 bg-[radial-gradient(ellipse_at_center,transparent_65%,rgba(2,6,26,.6)_100%)]" />
+
+        {/* Search & Dock */}
+        <motion.div
+          initial={{ opacity: 0, y: -16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.3, duration: 0.5 }}
+          className={`absolute left-5 top-5 z-30 flex flex-wrap items-center gap-3 p-2.5 ${GLASS}`}
+        >
+          <form onSubmit={handleSearch} className="relative flex items-center">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                setSearchError("");
+              }}
+              onFocus={() => results.length && setOpen(true)}
+              placeholder="Search any city on Earth…"
+              className="w-60 rounded-xl border border-white/10 bg-black/60 py-1.5 pl-3 pr-14 text-xs text-white placeholder-slate-400 focus:border-[#2ee6c5] focus:outline-none"
+            />
+            <button
+              type="submit"
+              className="absolute right-1.5 rounded-lg bg-[#2ee6c5] px-2 py-1 text-[10px] font-bold uppercase text-[#02061a] hover:brightness-110"
+            >
+              {searching ? "…" : "Go"}
+            </button>
+
+            {(open && results.length > 0) || searchError ? (
+              <div className={`absolute left-0 top-full z-50 mt-2 w-72 overflow-hidden ${GLASS}`}>
+                {searchError && <div className="px-3 py-2 text-xs text-rose-300">{searchError}</div>}
+                {open &&
+                  results.map((r, i) => (
+                    <button
+                      type="button"
+                      key={`${r.latitude}-${r.longitude}-${i}`}
+                      onClick={() => goTo(r)}
+                      className="block w-full border-b border-white/5 px-3 py-2 text-left text-xs last:border-0 hover:bg-white/10"
+                    >
+                      <div className="font-semibold text-white">{r.name}</div>
+                      <div className="text-[10px] text-slate-400">
+                        {[r.admin1, r.country].filter(Boolean).join(", ")}
+                      </div>
+                    </button>
+                  ))}
+              </div>
+            ) : null}
+          </form>
+
+          <div className="relative flex rounded-xl bg-black/40 p-1">
+            {(["lst", "ndvi", "equity"] as Layer[]).map((l) => (
+              <button
+                key={l}
+                onClick={() => setLayer(l)}
+                className={`relative z-10 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider transition-colors ${
+                  layer === l ? "text-[#02061a]" : "text-slate-400 hover:text-white"
+                }`}
+              >
+                {layer === l && (
+                  <motion.span
+                    layoutId="pill"
+                    className="absolute inset-0 -z-10 rounded-lg bg-gradient-to-r from-[#2ee6c5] to-[#7dd3fc]"
+                    transition={{ type: "spring", stiffness: 380, damping: 30 }}
+                  />
+                )}
+                {LABELS[l]}
+              </button>
+            ))}
+          </div>
+
+          {/* time period */}
+          <div className="flex items-center gap-1 rounded-xl bg-black/40 p-1">
+            <span className="px-2 text-[10px] uppercase tracking-wider text-slate-500">Period</span>
+            {RANGE_ORDER.map((r: RangeId) => (
+              <button
+                key={r}
+                onClick={() => setRange(r)}
+                title={RANGES[r].blurb}
+                className={`rounded-lg px-2.5 py-1 text-[10px] font-semibold uppercase transition ${
+                  range === r ? "bg-[#7dd3fc] text-[#02061a]" : "text-slate-400 hover:text-white"
+                }`}
+              >
+                {RANGES[r].short}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex gap-1 rounded-xl bg-black/40 p-1">
+            {[
+              ["cinematic", "🎬 3D Angle"],
+              ["flat", "🗺️ Top-Down"],
+              ["street", "🏙️ Horizon"],
+            ].map(([mode, label]) => (
+              <button
+                key={mode}
+                onClick={() => applyViewMode(mode as ViewMode)}
+                className={`rounded-lg px-2.5 py-1 text-[10px] font-semibold uppercase transition ${
+                  viewMode === mode ? "bg-[#2ee6c5] text-[#02061a]" : "text-slate-400 hover:text-white"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          <button
+            onClick={() => setOrbit(!orbit)}
+            className={`rounded-xl border px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider transition ${
+              orbit ? "border-[#2ee6c5] text-[#2ee6c5]" : "border-white/10 text-slate-400 hover:text-white"
+            }`}
+          >
+            🔄 Orbit
+          </button>
+
+          <button
+            onClick={() => setWaves((w) => !w)}
+            className={`rounded-xl border px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider transition ${
+              waves ? "border-[#2ee6c5] text-[#2ee6c5]" : "border-white/10 text-slate-400 hover:text-white"
+            }`}
+          >
+            🌊 Waves
+          </button>
+
+          <button
+            onClick={() => {
+              setOrbit(false);
+              markerRef.current?.remove();
+              setSel(null);
+              mapRef.current?.flyTo({ center: [78.9629, 22.0], zoom: 4.8, pitch: 40, bearing: -15, duration: 2500 });
+            }}
+            className="rounded-xl bg-white/10 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider transition hover:bg-white/20 active:scale-95"
+          >
+            🌐 Reset
+          </button>
+        </motion.div>
+
+        {/* Earth Engine status */}
+        <AnimatePresence>
+          {gee.state !== "idle" && (
+            <motion.div
+              key={gee.state}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              className={`absolute bottom-[8.5rem] left-16 z-30 max-w-[calc(100%-5rem)] px-4 py-2.5 text-[11px] md:max-w-[24rem] ${GLASS}`}
+            >
+              <div className="flex items-start gap-2.5">
+                <span
+                  className={`mt-1 h-2 w-2 shrink-0 rounded-full ${
+                    gee.state === "ready"
+                      ? "bg-[#2ee6c5]"
+                      : gee.state === "loading" || gee.state === "throttled"
+                        ? "animate-pulse bg-amber-300"
+                        : "bg-rose-400"
+                  }`}
+                />
+                <div className="min-w-0">
+                  {gee.state === "throttled" && (
+                    <p className="text-amber-200">Earth Engine is rate-limiting requests. Retrying automatically…</p>
+                  )}
+                  {gee.state === "loading" && (
+                    <p className="text-slate-300">
+                      Earth Engine · loading {LABELS[layer].toLowerCase()} ({R.short})…
+                    </p>
+                  )}
+                  {gee.state === "ready" && (
+                    <p className="text-slate-300">
+                      MODIS satellite composite · {R.label}
+                      {geePeriod && geePeriod.start && (
+                        <span className="block text-slate-500">
+                          {geePeriod.start} to {geePeriod.end}. Not live: data lags by about 10 days.
+                        </span>
+                      )}
+                    </p>
+                  )}
+                  {gee.state === "error" && (
+                    <>
+                      <p className="text-rose-300">Earth Engine layer failed</p>
+                      <p className="mt-1 break-words text-slate-400">{gee.message}</p>
+                      <button
+                        onClick={() => showGee(layer, range, true)}
+                        className="mt-2 rounded-lg bg-white/10 px-2.5 py-1 font-semibold uppercase tracking-wider text-white hover:bg-white/20"
+                      >
+                        Retry
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Legend */}
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.6, duration: 0.5 }}
+          className={`absolute bottom-5 left-16 z-30 max-w-[calc(100%-5rem)] p-4 md:w-[24rem] ${GLASS}`}
+        >
+          <div className="mb-1 flex items-baseline justify-between gap-3 text-[10px] uppercase tracking-[0.2em] text-slate-400">
+            <span>{LABELS[layer]}</span>
+            <span className="text-[#7dd3fc]">{R.short}</span>
+          </div>
+          <div className="h-2 rounded-full" style={{ background: `linear-gradient(to right, ${RAMPS[layer].join(",")})` }} />
+          <div className="mt-1 flex justify-between text-[11px] tabular-nums">
+            <span>{legendLo}</span>
+            <span>{legendHi}</span>
+          </div>
+          <div className="mt-2 text-[10px] normal-case leading-snug text-slate-500">
+            {layer === "equity" ? "Hotter and barer places score higher. " : ""}
+            {R.blurb}.
+          </div>
+        </motion.div>
+
+        {/* Inspector */}
+        <AnimatePresence>
+          {sel && (
+            <motion.aside
+              key={`${sel.lat}-${sel.lon}`}
+              initial={{ opacity: 0, x: 48 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 48 }}
+              className={`absolute right-5 top-20 z-30 max-h-[calc(100%-7rem)] w-72 overflow-y-auto p-5 ${GLASS}`}
+            >
+              <div className="flex items-start justify-between">
+                <div className="pr-2">
+                  <div className="text-[10px] uppercase tracking-[0.3em] text-[#2ee6c5]">Location</div>
+                  <h4 className="mt-1 text-sm leading-snug text-white">{sel.name ?? "Selected point"}</h4>
+                  <div className="mt-0.5 text-[10px] tabular-nums text-slate-500">
+                    {sel.lat.toFixed(4)}°, {sel.lon.toFixed(4)}°
+                  </div>
+                  <div className={`mt-1 text-[10px] ${stateLine[sel.state].cls}`}>{stateLine[sel.state].text}</div>
+                </div>
+                <button
+                  onClick={() => {
+                    setSel(null);
+                    markerRef.current?.remove();
+                  }}
+                  className="text-slate-500 hover:text-white"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="mt-4 space-y-3">
+                {bars.map((b) => (
+                  <div key={b.key}>
+                    <div className="flex justify-between text-[10px] uppercase text-slate-400">
+                      <span>{b.label}</span>
+                      <span className="font-semibold normal-case text-white">{b.text}</span>
+                    </div>
+                    <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-white/10">
+                      <div
+                        className="h-full rounded-full transition-all duration-500"
+                        style={{ width: `${clamp(b.pct) * 100}%`, background: ramp(clamp(b.pct), RAMPS[b.key]) }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* live air temperature */}
+              <div className="mt-5 border-t border-white/10 pt-4">
+                <div className="flex items-baseline justify-between text-[10px] uppercase text-slate-400">
+                  <span>Air temp right now</span>
+                  <span className="text-[#7dd3fc]">Live</span>
+                </div>
+                <div className="mt-1 text-sm font-semibold text-white">
+                  {sel.airState === "loading" && <span className="text-slate-500">Loading…</span>}
+                  {sel.airState === "error" && <span className="text-slate-500">Unavailable</span>}
+                  {sel.airState === "ok" && sel.air && (
+                    <>
+                      {sel.air.temp.toFixed(1)}°C
+                      {sel.air.humidity != null && (
+                        <span className="ml-2 text-xs font-normal text-slate-400">{sel.air.humidity}% humidity</span>
+                      )}
+                    </>
+                  )}
+                </div>
+                <p className="mt-1 text-[10px] normal-case leading-snug text-slate-500">
+                  Weather model, measured 2 m above ground
+                  {sel.air?.time ? ` · ${sel.air.time.slice(11, 16)} local` : ""}. Surface temperature above is
+                  ground skin temperature, so the two differ.
+                </p>
+              </div>
+            </motion.aside>
+          )}
+        </AnimatePresence>
+
+        {waves && sea && (
+          <div className={`absolute bottom-[4.5rem] right-5 z-30 px-3 py-1.5 text-[10px] uppercase tracking-wider text-slate-300 ${GLASS}`}>
+            🌊 Sea state · {sea}
+          </div>
+        )}
+
+        <AiAnalyst onDiveIn={() => mapRef.current?.triggerRepaint()} onSwitchLayer={(l) => setLayer(l)} />
+      </div>
+    </main>
+  );
+}

@@ -1,0 +1,82 @@
+[
+ {
+  "code": "chennai",
+  "name": "Chennai",
+  "country": "India",
+  "center": [
+   80.21,
+   13.04
+  ],
+  "zoom": 10.3
+ },
+ {
+  "code": "london",
+  "name": "London",
+  "country": "UK",
+  "center": [
+   -0.09,
+   51.49
+  ],
+  "zoom": 10.3
+ },
+ {
+  "code": "new-york",
+  "name": "New York",
+  "country": "USA",
+  "center": [
+   -73.985,
+   40.705
+  ],
+  "zoom": 10.3
+ },
+ {
+  "code": "tokyo",
+  "name": "Tokyo",
+  "country": "Japan",
+  "center": [
+   139.735,
+   35.66
+  ],
+  "zoom": 10.3
+ },
+ {
+  "code": "lagos",
+  "name": "Lagos",
+  "country": "Nigeria",
+  "center": [
+   3.375,
+   6.54
+  ],
+  "zoom": 10.3
+ },
+ {
+  "code": "sao-paulo",
+  "name": "S\u00e3o Paulo",
+  "country": "Brazil",
+  "center": [
+   -46.6,
+   -23.6
+  ],
+  "zoom": 10.3
+ },
+ {
+  "code": "sydney",
+  "name": "Sydney",
+  "country": "Australia",
+  "center": [
+   151.1,
+   -33.85
+  ],
+  "zoom": 10.3
+ },
+ {
+  "code": "phoenix",
+  "name": "Phoenix",
+  "country": "USA",
+  "center": [
+   -112.05,
+   33.5
+  ],
+  "zoom": 10.3
+ }
+]

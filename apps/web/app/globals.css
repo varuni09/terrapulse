@@ -1,0 +1,24 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #02040a;
+  --fg: #e8f1ff;
+  --accent: #3ee6c1;
+  --accent-2: #ff7a45;
+  --line: rgba(62, 230, 193, 0.35);
+}
+html { background: var(--bg); color: var(--fg); }
+body { font-family: var(--font-sans), system-ui, sans-serif; overflow-x: hidden; }
+.font-mono { font-family: var(--font-mono), ui-monospace, monospace; }
+
+@keyframes marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+.marquee-track { display: flex; width: max-content; animation: marquee 30s linear infinite; }
+
+@keyframes spin-slow { to { transform: rotate(360deg); } }
+.globe-stub {
+  background: radial-gradient(circle at 35% 30%, #1b6f8f 0%, #0b2a4a 45%, #020812 75%);
+  box-shadow: 0 0 120px 20px rgba(62, 230, 193, 0.25), inset -40px -40px 80px rgba(0,0,0,.7);
+}
+@media (prefers-reduced-motion: reduce) {
+  .marquee-track, .spin-slow { animation: none !important; }
+}

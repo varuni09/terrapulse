@@ -1,0 +1,16 @@
+[
+  {
+    "file": "LC08_L2SP_090083_20241212_02_T1.json",
+    "date": "2024-12-12",
+    "scene_id": "LC08_L2SP_090083_20241212_02_T1",
+    "cloud_cover_scene": 0.19,
+    "published_lst_cells": 1208
+  },
+  {
+    "file": "LC08_L2SP_090083_20230108_02_T1.json",
+    "date": "2023-01-08",
+    "scene_id": "LC08_L2SP_090083_20230108_02_T1",
+    "cloud_cover_scene": 0.0,
+    "published_lst_cells": 1152
+  }
+]

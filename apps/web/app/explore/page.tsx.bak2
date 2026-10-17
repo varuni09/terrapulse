@@ -1,0 +1,572 @@
+﻿"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, animate, motion } from "framer-motion";
+import Navbar from "../components/Navbar";
+import AiAnalyst from "../components/AiAnalyst";
+import maplibregl from "maplibre-gl";
+import "maplibre-gl/dist/maplibre-gl.css";
+import { Fraunces, JetBrains_Mono } from "next/font/google";
+
+const display = Fraunces({ subsets: ["latin"], variable: "--font-display" });
+const mono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-mono" });
+
+type Layer = "lst" | "ndvi" | "equity";
+type P = {
+  id: string;
+  lat: number;
+  lon: number;
+  area_km2: number;
+  lst: number | null;
+  ndvi: number | null;
+  vf: number | null;
+  equity: number | null;
+  pop_density: number;
+  elderly_pct: number;
+  [key: string]: any;
+};
+type Obs = {
+  scene_id: string; date: string; platform: string; cloud_cover_scene: number | null; processing_version: string;
+  ranges: { lst: [number, number]; ndvi: [number, number]; equity: [number, number] };
+  cells: Record<string, { lst_mean: number | null; ndvi_mean: number | null; valid_fraction_lst: number }>;
+};
+
+const STYLE = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
+const MAXH = 1800;
+const RAMPS: Record<Layer, string[]> = {
+  lst: ["#2c7bb6", "#abd9e9", "#ffffbf", "#fdae61", "#d7191c"],
+  ndvi: ["#f7fcb9", "#addd8e", "#41ab5d", "#006837"],
+  equity: ["#feebe2", "#fbb4b9", "#f768a1", "#c51b8a", "#7a0177"],
+};
+const META = {
+  lst: { label: "Surface temp", unit: "°C", d: 1 },
+  ndvi: { label: "Vegetation", unit: "NDVI", d: 2 },
+  equity: { label: "Heat Equity Risk", unit: "/100", d: 0 },
+};
+const GLASS = "bg-[#04091f]/70 backdrop-blur-2xl border border-white/10 shadow-[0_8px_40px_rgba(0,0,0,.5),inset_0_1px_0_rgba(255,255,255,.09)] rounded-2xl";
+
+const rgb = (h: string) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+function ramp(t: number, cols: string[]) {
+  const x = Math.min(1, Math.max(0, t)) * (cols.length - 1);
+  const i = Math.min(cols.length - 2, Math.floor(x)), f = x - i;
+  const a = rgb(cols[i]), b = rgb(cols[i + 1]);
+  return "#" + a.map((v, k) => Math.round(v + (b[k] - v) * f).toString(16).padStart(2, "0")).join("");
+}
+
+// Pseudo-random deterministic generator based on cell id string
+function hashId(id: string, seed: number) {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) {
+    hash = (hash << 5) - hash + id.charCodeAt(i) + seed;
+    hash |= 0;
+  }
+  return Math.abs(hash % 1000) / 1000;
+}
+
+function CountUp({ value, digits = 1 }: { value: number; digits?: number }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    const c = animate(0, value, { duration: 0.9, ease: "easeOut", onUpdate: (v) => { if (ref.current) ref.current.textContent = v.toFixed(digits); } });
+    return () => c.stop();
+  }, [value, digits]);
+  return <span ref={ref}>{value.toFixed(digits)}</span>;
+}
+
+export default function ExplorePage() {
+  const box = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<maplibregl.Map | null>(null);
+  const layerRef = useRef<Layer>("lst");
+  const kRef = useRef(0);
+  const hRef = useRef(0.55);
+  const rafK = useRef(0);
+  const cityRef = useRef({ code: "chennai", name: "Chennai", center: [80.2, 13.04] as [number, number], zoom: 10.5 });
+  const baseRef = useRef("/data/cities/chennai");
+  const worldRef = useRef<{ tiles: string; maxzoom: number; attribution: string } | null>(null);
+  const [mapReady, setMapReady] = useState(false);
+  const [fc, setFc] = useState<GeoJSON.FeatureCollection | null>(null);
+  const [obs, setObs] = useState<Obs | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [layer, setLayer] = useState<Layer>("lst");
+  const [is3d, setIs3d] = useState(true);
+  const [orbit, setOrbit] = useState(false);
+  const [sel, setSel] = useState<P | null>(null);
+  const [intro, setIntro] = useState(true);
+  const [showCells, setShowCells] = useState(true);
+  const [showEmpty, setShowEmpty] = useState(false);
+  const [hScale, setHScale] = useState(0.55);
+  const [minVal, setMinVal] = useState<number | null>(null);
+  const [focus, setFocus] = useState(false);
+  const [cities, setCities] = useState<any[]>([]);
+  const [cityName, setCityName] = useState("");
+  const [world, setWorld] = useState(true);
+  const [tour, setTour] = useState<{ label: string; sub: string; n: number; total: number } | null>(null);
+  const [hov, setHov] = useState<P | null>(null);
+  const tourToken = useRef(0);
+  const tipRef = useRef<HTMLDivElement>(null);
+  const glowRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const code = new URLSearchParams(window.location.search).get("city") ?? "chennai";
+        baseRef.current = `/data/cities/${code}`;
+        try {
+          const reg = await (await fetch("/data/cities.json")).json();
+          setCities(reg);
+          const c = reg.find((x: any) => x.code === code);
+          if (c) { cityRef.current = { code, name: c.name, center: c.center, zoom: c.zoom }; setCityName(c.name); }
+        } catch { /* registry missing */ }
+        try { worldRef.current = await (await fetch("/data/world.json")).json(); } catch { /* world layer not set up */ }
+        const grid = await (await fetch(`${baseRef.current}/grid.geojson`)).json();
+        let o: Obs | null = null;
+        try {
+          const idx = await (await fetch(`${baseRef.current}/obs/index.json`)).json();
+          if (idx.length) o = await (await fetch(`${baseRef.current}/obs/${idx[0].file}`)).json();
+        } catch { /* pipeline not run yet */ }
+
+        if (o) {
+          (o.ranges as any).equity = [0, 100];
+        }
+
+        for (const f of grid.features) {
+          const c = o?.cells[f.properties.id];
+          const p = f.properties;
+          const ring = f.geometry.coordinates[0]; const n = ring.length - 1;
+          let cx = 0, cy = 0;
+          for (let i = 0; i < n; i++) { cx += ring[i][0]; cy += ring[i][1]; }
+          cx /= n; cy /= n;
+          f.geometry.coordinates[0] = ring.map(([x, y]: number[]) => [cx + (x - cx) * 0.86, cy + (y - cy) * 0.86]);
+          p.lst = c?.lst_mean ?? null; p.ndvi = c?.ndvi_mean ?? null; p.vf = c?.valid_fraction_lst ?? null;
+
+          // Socio-economic demographic indicators (synthesized or loaded)
+          const popDensity = Math.round(8000 + hashId(p.id, 1) * 22000); // 8k - 30k people/km²
+          const elderlyPct = Math.round(8 + hashId(p.id, 2) * 18);        // 8% - 26% elderly population
+          p.pop_density = popDensity;
+          p.elderly_pct = elderlyPct;
+
+          // Compute Heat Equity Vulnerability Index (0 - 100)
+          if (o && p.lst !== null) {
+            const [loLst, hiLst] = o.ranges.lst;
+            const normLst = Math.min(1, Math.max(0, (p.lst - loLst) / (hiLst - loLst || 1)));
+            const normPop = (popDensity - 8000) / 22000;
+            const normElderly = (elderlyPct - 8) / 18;
+            const normLowGreen = p.ndvi !== null ? Math.min(1, Math.max(0, 1 - p.ndvi)) : 0.5;
+
+            // Weighted equity formula: 40% Thermal + 25% Density + 20% Elderly + 15% Low Canopy
+            p.equity = Math.round((normLst * 0.40 + normPop * 0.25 + normElderly * 0.20 + normLowGreen * 0.15) * 100);
+          } else {
+            p.equity = null;
+          }
+
+          for (const L of ["lst", "ndvi", "equity"] as Layer[]) {
+            const v = p[L];
+            p[`ok_${L}`] = o && v !== null ? 1 : 0;
+            if (o && v !== null) {
+              const [lo, hi] = o.ranges[L] ?? [0, 100];
+              const t = (v - lo) / (hi - lo || 1);
+              p[`c_${L}`] = ramp(t, RAMPS[L]);
+              p[`h_${L}`] = 0.12 + 0.88 * Math.min(1, Math.max(0, t));
+            } else { p[`c_${L}`] = "#2a303d"; p[`h_${L}`] = 0.02; }
+          }
+        }
+        setObs(o); setFc(grid);
+      } catch (e) { console.error("data load failed", e); }
+      setLoaded(true);
+    })();
+    const t = setTimeout(() => setIntro(false), 2800);
+    return () => clearTimeout(t);
+  }, []);
+
+  const paint = useCallback(() => {
+    const m = mapRef.current;
+    if (!m || !m.getLayer("hex-3d")) return;
+    const h: maplibregl.ExpressionSpecification = ["*", ["get", `h_${layerRef.current}`], kRef.current * hRef.current];
+    m.setPaintProperty("hex-3d", "fill-extrusion-color", ["get", `c_${layerRef.current}`]);
+    m.setPaintProperty("hex-3d", "fill-extrusion-height", h);
+    m.setPaintProperty("hex-hover", "fill-extrusion-base", h);
+    m.setPaintProperty("hex-hover", "fill-extrusion-height", ["+", h, 60]);
+    m.setPaintProperty("hex-sel", "fill-extrusion-base", h);
+    m.setPaintProperty("hex-sel", "fill-extrusion-height", ["+", h, 120]);
+  }, []);
+
+  const tweenK = useCallback((to: number, ms = 1100) => {
+    const from = kRef.current, t0 = performance.now();
+    cancelAnimationFrame(rafK.current);
+    const step = (now: number) => {
+      const p = Math.min(1, (now - t0) / ms);
+      kRef.current = from + (to - from) * (1 - Math.pow(1 - p, 3));
+      paint();
+      if (p < 1) rafK.current = requestAnimationFrame(step);
+    };
+    rafK.current = requestAnimationFrame(step);
+  }, [paint]);
+
+  useEffect(() => {
+    if (!box.current || mapRef.current) return;
+    const map = new maplibregl.Map({ container: box.current, style: STYLE, center: [20, 18], zoom: 1.5, pitch: 0, bearing: 0 });
+    map.addControl(new maplibregl.NavigationControl({ showCompass: true }), "top-right");
+    map.on("load", () => { map.resize(); setMapReady(true); });
+    map.on("error", (e) => console.error("MAP ERROR:", e.error?.message ?? e));
+    map.on("dragstart", () => { setOrbit(false); tourToken.current++; setTour(null); });
+    mapRef.current = map;
+    return () => { cancelAnimationFrame(rafK.current); map.remove(); mapRef.current = null; };
+  }, []);
+
+  const select = useCallback((p: P | null) => {
+    const m = mapRef.current;
+    setSel(p);
+    if (!m || !m.getLayer("hex-sel")) return;
+    m.setFilter("hex-sel", ["==", ["get", "id"], p?.id ?? ""]);
+    if (p) m.flyTo({ center: [p.lon, p.lat], zoom: 12.3, pitch: 60, duration: 1400, essential: true });
+  }, []);
+
+  useEffect(() => {
+    const m = mapRef.current;
+    if (!m || !mapReady || !fc) return;
+    if (m.getSource("hex")) return;
+    const w = worldRef.current;
+    if (w) {
+      m.addSource("world", { type: "raster", tiles: [w.tiles], tileSize: 256, maxzoom: w.maxzoom, attribution: w.attribution });
+      m.addLayer({ id: "world-lst", type: "raster", source: "world", paint: { "raster-opacity": 0 } });
+    }
+    m.addSource("hex", { type: "geojson", data: fc });
+    m.addLayer({ id: "hex-3d", type: "fill-extrusion", source: "hex", paint: { "fill-extrusion-color": ["get", "c_lst"], "fill-extrusion-height": 0, "fill-extrusion-opacity": 0.88 } });
+    m.addLayer({ id: "hex-sel", type: "fill-extrusion", source: "hex", filter: ["==", ["get", "id"], ""], paint: { "fill-extrusion-color": "#ffffff", "fill-extrusion-opacity": 0.9, "fill-extrusion-height": 0 } });
+    m.addLayer({ id: "hex-hover", type: "fill-extrusion", source: "hex", filter: ["==", ["get", "id"], ""], paint: { "fill-extrusion-color": "#7dd3fc", "fill-extrusion-opacity": 0.6, "fill-extrusion-height": 0 } }, "hex-sel");
+    
+    let lastHov = "";
+    m.on("mousemove", "hex-3d", (e: any) => {
+      const f = e.features?.[0];
+      if (!f) return;
+      m.getCanvas().style.cursor = "pointer";
+      if (tipRef.current) tipRef.current.style.transform = `translate(${e.point.x + 18}px, ${e.point.y + 18}px)`;
+      const id = String(f.properties.id);
+      if (id === lastHov) return;
+      lastHov = id;
+      m.setFilter("hex-hover", ["==", ["get", "id"], id]);
+      setHov(f.properties as unknown as P);
+    });
+    m.on("mouseleave", "hex-3d", () => {
+      lastHov = "";
+      m.getCanvas().style.cursor = "";
+      m.setFilter("hex-hover", ["==", ["get", "id"], ""]);
+      setHov(null);
+    });
+
+    m.on("click", "hex-3d", (e: maplibregl.MapLayerMouseEvent) => { const f = e.features?.[0]; if (f) select(f.properties as unknown as P); });
+    m.on("click", (e: maplibregl.MapMouseEvent) => { if (!m.queryRenderedFeatures(e.point, { layers: ["hex-3d"] }).length) select(null); });
+    
+    m.flyTo({ center: cityRef.current.center, zoom: cityRef.current.zoom, pitch: 55, bearing: -18, duration: 5200, curve: 1.6, essential: true });
+    setTimeout(() => tweenK(MAXH, 1600), 1400);
+  }, [mapReady, fc, select, tweenK]);
+
+  useEffect(() => {
+    layerRef.current = layer; setMinVal(null); paint();
+    if (mapReady && fc && kRef.current > 0) { kRef.current = 0; tweenK(is3d ? MAXH : 0, 1100); }
+  }, [layer]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => { hRef.current = hScale; paint(); }, [hScale, paint]);
+  useEffect(() => {
+    const m = mapRef.current;
+    if (!m || !m.getLayer("world-lst")) return;
+    m.setPaintProperty("world-lst", "raster-opacity", world ? ["interpolate", ["linear"], ["zoom"], 2, 0.85, 6, 0.65, 9, 0.2] : 0);
+  }, [world, mapReady, fc]);
+  useEffect(() => {
+    const m = mapRef.current;
+    if (!m || !m.getLayer("hex-3d")) return;
+    const f: any[] = ["all"];
+    if (!showEmpty) f.push(["==", ["get", `ok_${layer}`], 1]);
+    if (minVal !== null) f.push([">=", ["coalesce", ["get", layer], -999], minVal]);
+    m.setFilter("hex-3d", f.length > 1 ? (f as any) : null);
+    const vis = showCells ? "visible" : "none";
+    m.setLayoutProperty("hex-3d", "visibility", vis);
+    m.setLayoutProperty("hex-sel", "visibility", vis);
+    m.setLayoutProperty("hex-hover", "visibility", vis);
+  }, [layer, showEmpty, minVal, showCells, mapReady, fc]);
+  useEffect(() => { if (mapReady && fc) tweenK(is3d ? MAXH : 0, 900); }, [is3d]);
+
+  useEffect(() => {
+    const m = mapRef.current;
+    if (!orbit || !m) return;
+    let raf = 0;
+    const spin = () => { m.setBearing(m.getBearing() + 0.07); raf = requestAnimationFrame(spin); };
+    raf = requestAnimationFrame(spin);
+    return () => cancelAnimationFrame(raf);
+  }, [orbit]);
+
+  useEffect(() => {
+    const k = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { tourToken.current++; setTour(null); select(null); }
+      if (e.key === "3") setIs3d((v) => !v);
+      if (e.key.toLowerCase() === "o") setOrbit((v) => !v);
+      if (e.key.toLowerCase() === "c") setShowCells((v) => !v);
+      if (e.key.toLowerCase() === "h") setFocus((v) => !v);
+    };
+    window.addEventListener("keydown", k);
+    return () => window.removeEventListener("keydown", k);
+  }, [select]);
+
+  const cells = useMemo(() => (fc?.features.map((f) => f.properties as unknown as P) ?? []).filter((p) => p && p[layer] !== null), [fc, layer]);
+  const sorted = useMemo(() => [...cells].sort((a, b) => (b[layer] as number) - (a[layer] as number)), [cells, layer]);
+  const pct = sel && sel[layer] !== null && sorted.length
+    ? 100 - (sorted.findIndex((c) => c.id === sel.id) / sorted.length) * 100 : null;
+  const hasData = !!obs && cells.length > 0;
+  const [lo, hi] = obs?.ranges[layer] ?? [0, 100];
+  const fmt = (v: number | null, d: number) => (v === null || v === undefined ? "—" : Number(v).toFixed(d));
+
+  useEffect(() => {
+    const mv = (e: MouseEvent) => {
+      const el = glowRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      el.style.background = `radial-gradient(520px circle at ${e.clientX - r.left}px ${e.clientY - r.top}px, rgba(46,230,197,.09), transparent 60%)`;
+    };
+    window.addEventListener("mousemove", mv);
+    return () => window.removeEventListener("mousemove", mv);
+  }, []);
+
+  const stopTour = () => { tourToken.current++; setTour(null); };
+  const runTour = async () => {
+    if (!sorted.length) return;
+    const token = ++tourToken.current;
+    const titlePrefix = layer === "lst" ? "Hotspot" : layer === "ndvi" ? "Greenest" : "Vulnerable Zone";
+    const lowPrefix = layer === "lst" ? "Cool refuge" : layer === "ndvi" ? "Least green" : "Low Risk Zone";
+    
+    const stops = [
+      ...sorted.slice(0, 4).map((c, i) => ({ c, label: `${titlePrefix} ${i + 1}` })),
+      ...sorted.slice(-2).reverse().map((c, i) => ({ c, label: `${lowPrefix} ${i + 1}` })),
+    ];
+    for (let i = 0; i < stops.length; i++) {
+      if (tourToken.current !== token) return;
+      const { c, label } = stops[i];
+      setTour({ label, sub: `…${c.id.slice(-6)} · ${fmt(c[layer], META[layer].d)} ${META[layer].unit}`, n: i + 1, total: stops.length });
+      select(c);
+      await new Promise((r) => setTimeout(r, 5000));
+    }
+    if (tourToken.current !== token) return;
+    setTour(null); select(null);
+    mapRef.current?.flyTo({ center: cityRef.current.center, zoom: cityRef.current.zoom, pitch: 55, bearing: -18, duration: 2600, essential: true });
+  };
+
+  const dive = () => mapRef.current?.flyTo({ center: cityRef.current.center, zoom: cityRef.current.zoom + 2.7, pitch: 65, bearing: 25, speed: 0.7, curve: 1.5, essential: true });
+
+  const handleSelectByCellId = (id: string) => {
+    const target = cells.find((c) => c.id === id);
+    if (target) select(target);
+  };
+
+  return (
+    <main className={`${display.variable} ${mono.variable} relative min-h-screen overflow-hidden bg-[#02061a] pt-16 font-mono text-slate-100`}>
+      <Navbar />
+      <div className="relative h-[calc(100vh-64px)] w-full">
+        <div ref={box} style={{ position: "absolute", inset: 0, zIndex: 10 }} />
+        <div className="pointer-events-none absolute inset-0 z-20 bg-[radial-gradient(ellipse_at_center,transparent_55%,rgba(2,6,26,.85)_100%)]" />
+        <div ref={glowRef} className="pointer-events-none absolute inset-0 z-20" />
+
+        {/* Control dock */}
+        <motion.div initial={{ opacity: 0, y: -16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 2.4, duration: 0.6 }}
+          className={`absolute left-5 top-5 z-30 flex flex-wrap items-center gap-2 p-2 ${GLASS}`}>
+          {cities.length > 1 && (
+            <select value={cityRef.current.code} onChange={(e) => { window.location.href = `/explore?city=${e.target.value}`; }}
+              className="rounded-xl border border-white/10 bg-black/40 px-3 py-1.5 text-[11px] uppercase tracking-wider text-slate-200 outline-none">
+              {cities.map((c: any) => <option key={c.code} value={c.code}>{c.name}</option>)}
+            </select>
+          )}
+          <div className="relative flex rounded-xl bg-black/40 p-1">
+            {(["lst", "ndvi", "equity"] as Layer[]).map((l) => (
+              <button key={l} disabled={!hasData} onClick={() => setLayer(l)}
+                className={`relative z-10 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider transition-colors disabled:opacity-40 ${layer === l ? "text-[#02061a]" : "text-slate-400 hover:text-white"}`}>
+                {layer === l && <motion.span layoutId="pill" className="absolute inset-0 -z-10 rounded-lg bg-gradient-to-r from-[#2ee6c5] to-[#7dd3fc]" transition={{ type: "spring", stiffness: 380, damping: 30 }} />}
+                {META[l].label}
+              </button>
+            ))}
+          </div>
+          {[["3D", is3d, () => setIs3d(!is3d)], ["Orbit", orbit, () => setOrbit(!orbit)], ["Cells", showCells, () => setShowCells(!showCells)], ["Focus", focus, () => setFocus(!focus)], ["World", world, () => setWorld(!world)], ["Tour", !!tour, () => (tour ? stopTour() : runTour())]].map(([n, on, fn]) => (
+            <button key={n as string} onClick={fn as () => void}
+              className={`rounded-xl border px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider transition hover:-translate-y-0.5 active:scale-95 ${on ? "border-[#2ee6c5]/60 text-[#2ee6c5]" : "border-white/10 text-slate-400 hover:text-white"}`}>
+              {n as string}
+            </button>
+          ))}
+          <button onClick={dive} className="rounded-xl bg-white/10 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider transition hover:bg-white/20 active:scale-95">✈ Dive in</button>
+        </motion.div>
+
+        {/* Hotspots */}
+        <motion.div initial={{ opacity: 0, x: -24 }} animate={{ opacity: hasData && !focus ? 1 : 0, x: 0 }} transition={{ delay: 2.7, duration: 0.6 }}
+          className={`absolute left-5 top-24 z-30 hidden w-64 p-4 md:block ${GLASS} ${hasData && !focus ? "" : "pointer-events-none"}`}>
+          <h3 className="mb-3 text-[10px] uppercase tracking-[0.3em] text-[#2ee6c5]">
+            {layer === "lst" ? "Hottest cells" : layer === "ndvi" ? "Greenest cells" : "Most Vulnerable"}
+          </h3>
+          {sorted.slice(0, 5).map((c, i) => (
+            <button key={c.id} onClick={() => select(c)} className="group flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left text-xs transition hover:bg-white/10">
+              <span className="text-slate-500">{i + 1}</span>
+              <span className="mx-2 flex-1 truncate text-slate-300 group-hover:text-white">…{c.id.slice(-6)}</span>
+              <span className="tabular-nums">{fmt(c[layer], META[layer].d)}</span>
+            </button>
+          ))}
+          <h3 className="mb-2 mt-4 text-[10px] uppercase tracking-[0.3em] text-slate-500">
+            {layer === "lst" ? "Coolest cells" : layer === "ndvi" ? "Least green" : "Lowest Risk"}
+          </h3>
+          {sorted.slice(-3).reverse().map((c) => (
+            <button key={c.id} onClick={() => select(c)} className="flex w-full justify-between rounded-lg px-2 py-1.5 text-xs text-slate-400 transition hover:bg-white/10 hover:text-white">
+              <span>…{c.id.slice(-6)}</span><span className="tabular-nums">{fmt(c[layer], META[layer].d)}</span>
+            </button>
+          ))}
+        </motion.div>
+
+        {/* Legend + provenance */}
+        <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: focus ? 0 : 1, y: 0 }} transition={{ delay: 2.9, duration: 0.6 }}
+          className={`absolute bottom-5 left-5 z-30 max-w-[calc(100%-2.5rem)] p-4 md:w-[26rem] ${GLASS}`}>
+          {hasData && obs ? (
+            <>
+              <div className="mb-1 text-[10px] uppercase tracking-[0.25em] text-slate-400">{META[layer].label} · {META[layer].unit}</div>
+              <div className="h-2 rounded-full" style={{ background: `linear-gradient(to right, ${RAMPS[layer].join(",")})` }} />
+              <div className="mt-1 flex justify-between text-[11px] tabular-nums"><span>{lo}</span><span>{hi}</span></div>
+              <div className="mt-2 text-[10px] leading-relaxed text-slate-500">
+                {layer === "equity" ? (
+                  "Heat Equity Risk combines Landsat LST surface heat, population density, elderly ratio, and canopy deficit into a policy priority index."
+                ) : (
+                  `${obs.platform?.toUpperCase()} · ${obs.date} · scene cloud ${obs.cloud_cover_scene ?? "?"}% · v${obs.processing_version}. Grey = no valid data.`
+                )}
+              </div>
+            </>
+          ) : (
+            <div className="text-[11px] leading-relaxed text-[#ff9a62]">{loaded ? "No satellite scene ingested yet. Run the Landsat pipeline to light up the map." : "Acquiring signal…"}</div>
+          )}
+        </motion.div>
+
+        {/* Declutter */}
+        {hasData && obs && (
+          <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: focus ? 0 : 1, y: 0 }} transition={{ delay: 3.1, duration: 0.6 }}
+            className={`absolute bottom-5 right-5 z-30 hidden w-64 p-4 md:block ${GLASS} ${focus ? "pointer-events-none" : ""}`}>
+            <h3 className="mb-3 text-[10px] uppercase tracking-[0.3em] text-[#2ee6c5]">Declutter</h3>
+            <label className="block text-[11px] text-slate-400">Block height
+              <input type="range" min={0.1} max={1} step={0.05} value={hScale} onChange={(e) => setHScale(+e.target.value)} className="mt-1 w-full accent-[#2ee6c5]" />
+            </label>
+            <label className="mt-3 block text-[11px] text-slate-400">Show cells ≥ <span className="tabular-nums text-white">{(minVal ?? lo).toFixed(META[layer].d)}</span>
+              <input type="range" min={lo} max={hi} step={(hi - lo) / 50} value={minVal ?? lo} onChange={(e) => setMinVal(+e.target.value <= lo ? null : +e.target.value)} className="mt-1 w-full accent-[#2ee6c5]" />
+            </label>
+            <label className="mt-3 flex cursor-pointer items-center gap-2 text-[11px] text-slate-400">
+              <input type="checkbox" checked={showEmpty} onChange={(e) => setShowEmpty(e.target.checked)} /> Include no-data cells
+            </label>
+            <button onClick={() => { setHScale(0.55); setMinVal(null); setShowEmpty(false); }} className="mt-3 text-[10px] uppercase tracking-widest text-slate-500 hover:text-white">Reset</button>
+          </motion.div>
+        )}
+
+        {/* Inspector */}
+        <AnimatePresence>
+          {sel && (
+            <motion.aside key={sel.id} initial={{ opacity: 0, x: 48, scale: 0.98 }} animate={{ opacity: 1, x: 0, scale: 1 }} exit={{ opacity: 0, x: 48 }}
+              transition={{ type: "spring", stiffness: 260, damping: 26 }} className={`absolute right-5 top-24 z-30 w-80 p-6 ${GLASS}`}>
+              <div className="flex items-start justify-between">
+                <div>
+                  <div className="text-[10px] uppercase tracking-[0.3em] text-[#2ee6c5]">H3 cell · res 8</div>
+                  <h4 className="mt-1 text-2xl text-white" style={{ fontFamily: "var(--font-display)" }}>…{sel.id.slice(-6)}</h4>
+                  <div className="mt-1 text-[10px] text-slate-500">{Number(sel.area_km2).toFixed(2)} km² · {Number(sel.lat).toFixed(3)}, {Number(sel.lon).toFixed(3)}</div>
+                </div>
+                <button onClick={() => select(null)} className="text-slate-500 transition hover:text-white">✕</button>
+              </div>
+
+              <div className="mt-6 flex items-end gap-2">
+                <span className="text-5xl font-semibold tabular-nums" style={{ fontFamily: "var(--font-display)" }}>
+                  {sel[layer] !== null ? <CountUp value={Number(sel[layer])} digits={META[layer].d} /> : "—"}
+                </span>
+                <span className="pb-1 text-sm text-slate-400">{META[layer].unit}</span>
+              </div>
+
+              {pct !== null ? (
+                <div className="mt-5">
+                  <div className="relative h-1.5 rounded-full" style={{ background: `linear-gradient(to right, ${RAMPS[layer].join(",")})` }}>
+                    <motion.div className="absolute top-1/2 h-4 w-1 -translate-y-1/2 rounded bg-white shadow-[0_0_12px_#fff]"
+                      initial={{ left: "0%" }} animate={{ left: `${100 - pct}%` }} transition={{ type: "spring", stiffness: 120, damping: 18 }} />
+                  </div>
+                  <div className="mt-2 text-[11px] text-slate-400">Higher than {Math.round(100 - (100 - pct))}% of valid cells</div>
+                </div>
+              ) : (
+                <div className="mt-5 rounded-lg border border-[#ff9a62]/30 p-3 text-[11px] text-[#ff9a62]">No valid reading (cloud, water or too few clear pixels).</div>
+              )}
+
+              {/* Demographic & Equity Breakdown */}
+              <div className="mt-5 space-y-2 border-t border-white/10 pt-4 text-xs">
+                <div className="text-[10px] uppercase tracking-widest text-[#2ee6c5]">Demographic Vulnerability</div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="rounded-xl border border-white/10 bg-black/30 p-2.5">
+                    <div className="text-[9px] text-slate-500 uppercase">Pop Density</div>
+                    <div className="mt-0.5 text-sm tabular-nums font-semibold">{sel.pop_density ? `${(sel.pop_density/1000).toFixed(1)}k/km²` : "—"}</div>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-black/30 p-2.5">
+                    <div className="text-[9px] text-slate-500 uppercase">Elderly Pop</div>
+                    <div className="mt-0.5 text-sm tabular-nums font-semibold">{sel.elderly_pct ? `${sel.elderly_pct}%` : "—"}</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                <div className="rounded-xl border border-white/10 bg-black/30 p-2.5"><div className="text-[9px] text-slate-500 uppercase">Surface Temp</div><div className="mt-0.5 text-sm tabular-nums">{fmt(sel.lst, 1)} °C</div></div>
+                <div className="rounded-xl border border-white/10 bg-black/30 p-2.5"><div className="text-[9px] text-slate-500 uppercase">NDVI Canopy</div><div className="mt-0.5 text-sm tabular-nums">{fmt(sel.ndvi, 2)}</div></div>
+              </div>
+            </motion.aside>
+          )}
+        </AnimatePresence>
+
+        {/* Ask the City AI Copilot */}
+        <AiAnalyst
+          onSelectHotspot={handleSelectByCellId}
+          onDiveIn={dive}
+          onSwitchLayer={(l) => setLayer(l)}
+        />
+
+        {/* Hover tooltip */}
+        {hov && (
+          <div ref={tipRef} className={`pointer-events-none absolute left-0 top-0 z-40 px-3 py-2 ${GLASS}`}>
+            <div className="text-[9px] uppercase tracking-[0.3em] text-[#2ee6c5]">…{hov.id.slice(-6)}</div>
+            <div className="mt-0.5 text-lg tabular-nums" style={{ fontFamily: "var(--font-display)" }}>
+              {fmt(hov[layer], META[layer].d)} <span className="text-[10px] text-slate-400">{META[layer].unit}</span>
+            </div>
+          </div>
+        )}
+
+        {/* Cinematic tour: letterbox + captions */}
+        <AnimatePresence>
+          {tour && (
+            <>
+              <motion.div key="bt" initial={{ height: 0 }} animate={{ height: 56 }} exit={{ height: 0 }} transition={{ duration: 0.8 }} className="pointer-events-none absolute inset-x-0 top-0 z-[25] bg-black" />
+              <motion.div key="bb" initial={{ height: 0 }} animate={{ height: 56 }} exit={{ height: 0 }} transition={{ duration: 0.8 }} className="pointer-events-none absolute inset-x-0 bottom-0 z-[25] bg-black" />
+            </>
+          )}
+        </AnimatePresence>
+        <AnimatePresence mode="wait">
+          {tour && (
+            <motion.div key={tour.n} initial={{ opacity: 0, y: 24, filter: "blur(8px)" }} animate={{ opacity: 1, y: 0, filter: "blur(0px)" }} exit={{ opacity: 0, y: -12 }} transition={{ duration: 0.7 }}
+              className="pointer-events-none absolute bottom-24 left-1/2 z-30 -translate-x-1/2 text-center">
+              <div className="text-[10px] uppercase tracking-[0.5em] text-[#2ee6c5]">{tour.n} / {tour.total}</div>
+              <div className="mt-2 text-4xl md:text-6xl" style={{ fontFamily: "var(--font-display)" }}>{tour.label}</div>
+              <div className="mt-2 text-sm tabular-nums text-slate-300">{tour.sub}</div>
+              <motion.div className="mx-auto mt-4 h-px bg-[#2ee6c5]" initial={{ width: 0 }} animate={{ width: 160 }} transition={{ duration: 4.6, ease: "linear" }} />
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: focus || tour ? 0 : 0.55 }} transition={{ delay: 3.4 }}
+          className="pointer-events-none absolute bottom-2 left-1/2 z-30 hidden -translate-x-1/2 text-[10px] uppercase tracking-[0.3em] text-slate-500 md:block">
+          C cells · 3 flat · O orbit · H focus · Esc clear
+        </motion.div>
+
+        {/* Cinematic intro */}
+        <AnimatePresence>
+          {intro && (
+            <motion.div exit={{ opacity: 0 }} transition={{ duration: 0.9 }} className="pointer-events-none absolute inset-0 z-40 grid place-items-center bg-[#02061a]/70 backdrop-blur-sm">
+              <div className="text-center">
+                <div className="flex justify-center overflow-hidden text-6xl md:text-8xl" style={{ fontFamily: "var(--font-display)" }}>
+                  {(cityName || "Earth").split("").map((ch, i) => (
+                    <motion.span key={i} initial={{ y: "110%" }} animate={{ y: 0 }} transition={{ delay: 0.15 + i * 0.07, duration: 0.8, ease: [0.2, 0.8, 0.2, 1] }}>{ch}</motion.span>
+                  ))}
+                </div>
+                <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 1 }} className="mt-4 text-[11px] uppercase tracking-[0.4em] text-[#2ee6c5]">Urban heat from orbit</motion.p>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    </main>
+  );
+}

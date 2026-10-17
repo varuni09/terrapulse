@@ -1,0 +1,9 @@
+.env
+__pycache__/
+.venv/
+node_modules/
+.next/
+data/raw/*
+data/processed/*
+!data/**/.gitkeep
+gee-key.json
