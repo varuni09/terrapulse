@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import Navbar from "../components/Navbar";
-import AiAnalyst from "../components/AiAnalyst";
+import AiAnalyst from "../insights/AiAnalyst";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { Fraunces, JetBrains_Mono } from "next/font/google";
