@@ -1,8 +1,6 @@
 // Save as: app/api/gee/debug/route.ts   (DELETE this file once Earth Engine works)
 import { NextResponse } from "next/server";
 
-export const dynamic = "force-dynamic";
-
 export async function GET() {
   const raw = process.env.GEE_SERVICE_ACCOUNT_JSON;
   let parsed: any = null;

@@ -826,6 +826,10 @@ export default function ExplorePage() {
     });
   };
 
+  const handleAnalystFlyTo = (lat: number, lon: number, name: string) => {
+    goTo({ name, latitude: lat, longitude: lon });
+  };
+
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     const q = searchQuery.trim();
@@ -1036,7 +1040,7 @@ export default function ExplorePage() {
           {sel && <Inspector key="inspector" sel={sel} range={range} onClose={closeInspector} />}
         </AnimatePresence>
 
-        <AiAnalyst onDiveIn={handleDive} onSwitchLayer={handleSwitchLayer} />
+        <AiAnalyst onFlyTo={handleAnalystFlyTo} onDiveIn={handleDive} onSwitchLayer={handleSwitchLayer} />
       </div>
     </main>
   );
