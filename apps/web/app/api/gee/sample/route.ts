@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse, connection } from "next/server";
 import { ee, initializeEarthEngine } from "@/lib/gee";
-import { lstImage, ndviImage, period } from "@/lib/gee-images";
+import { latestObservation, lstImage, ndviImage, period } from "@/lib/gee-images";
 import { isRange, type RangeId } from "@/lib/gee-config";
 
 type Values = { lst_c: number | null; ndvi: number | null; water_occurrence: number | null };
@@ -147,6 +147,7 @@ export async function GET(request: NextRequest) {
         fallback: !!usedRange && usedRange !== range,
         attemptedRanges: ranges,
         period: usedRange ? period(usedRange) : period(range),
+        latest: await latestObservation(range).catch(() => null),
         data: values ? { lst_c: values.lst_c, ndvi: values.ndvi } : null,
         status,
         ...(note ? { note } : {}),

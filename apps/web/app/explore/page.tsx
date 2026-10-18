@@ -28,6 +28,7 @@ type Sel = {
   airState: "loading" | "ok" | "error";
   sampleRange?: RangeId;
   samplePeriod?: Period;
+  sampleLatest?: LatestObservation | null;
   sampleNote?: string;
   name?: string;
   state: "loading" | "ok" | "nodata" | "water" | "error";
@@ -43,6 +44,7 @@ type Place = {
 };
 
 type Period = { start: string; end: string };
+type LatestObservation = { date: string | null; source: string };
 type GeeStatus = { state: "idle" | "loading" | "ready" | "throttled" | "error"; message?: string };
 
 type EarthEngineSample = {
@@ -53,6 +55,7 @@ type EarthEngineSample = {
   usedRange?: RangeId | null;
   fallback?: boolean;
   period?: Period;
+  latest?: LatestObservation | null;
   note?: string;
 };
 type LiveGrid = {
@@ -116,7 +119,17 @@ function legendBounds(layer: Layer, range: RangeId): [string, string] {
   return ["0", "100"];
 }
 
-async function fetchTileUrl(layer: Layer, range: RangeId): Promise<{ url: string; period: Period }> {
+function latestObservationLabel(latest: LatestObservation | null) {
+  if (!latest?.date) return `Newest satellite image: date unavailable · ${latest?.source ?? "MODIS"}`;
+  const [year, month, day] = latest.date.split("-").map(Number);
+  const observedUtc = Date.UTC(year, month - 1, day);
+  const now = new Date();
+  const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const daysAgo = Math.max(0, Math.floor((todayUtc - observedUtc) / 86_400_000));
+  return `Newest satellite image: ${latest.date} (${daysAgo} ${daysAgo === 1 ? "day" : "days"} ago) · ${latest.source}`;
+}
+
+async function fetchTileUrl(layer: Layer, range: RangeId): Promise<{ url: string; period: Period; latest: LatestObservation | null }> {
   const res = await fetch(`/api/gee/tiles?layer=${layer}&range=${range}`);
   const text = await res.text();
   let json: any = null;
@@ -133,7 +146,7 @@ async function fetchTileUrl(layer: Layer, range: RangeId): Promise<{ url: string
   if (!url.includes("{z}") || !url.includes("{x}") || !url.includes("{y}")) {
     throw new Error("tileUrl must contain {z}/{x}/{y} placeholders.");
   }
-  return { url, period: json?.period ?? { start: "", end: "" } };
+  return { url, period: json?.period ?? { start: "", end: "" }, latest: json?.latest ?? null };
 }
 
 async function fetchEarthEngineSample(
@@ -209,7 +222,7 @@ async function geocode(q: string): Promise<Place | null> {
    Typing in the search box or loading a sample re-renders the page. These panels only
    re-render when their own props change, so the map overlays stay cheap. */
 
-const Legend = memo(function Legend({ layer, range, period }: { layer: Layer; range: RangeId; period: Period | null }) {
+const Legend = memo(function Legend({ layer, range, period, latest }: { layer: Layer; range: RangeId; period: Period | null; latest: LatestObservation | null }) {
   const R = RANGES[range];
   const [lo, hi] = legendBounds(layer, range);
   return (
@@ -233,13 +246,13 @@ const Legend = memo(function Legend({ layer, range, period }: { layer: Layer; ra
       </div>
       <div className="mt-2 text-[10px] normal-case leading-snug text-slate-500">
         {layer === "equity" ? "Hotter and barer places score higher. " : ""}
-        MODIS satellite composite · {period?.start && period.end ? `${period.start} to ${period.end}` : R.blurb} · about 10 days behind, not live.
+        MODIS satellite composite · {period?.start && period.end ? `${period.start} to ${period.end}` : R.blurb}. {latestObservationLabel(latest)} · satellite data are not live.
       </div>
     </motion.div>
   );
 });
 
-const LiveLegend = memo(function LiveLegend() {
+const LiveLegend = memo(function LiveLegend({ latest }: { latest: LatestObservation | null }) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 16 }}
@@ -252,7 +265,7 @@ const LiveLegend = memo(function LiveLegend() {
       <div className="h-2 rounded-full" style={{ background: `linear-gradient(to right, ${LIVE_COLORS.join(",")})` }} />
       <div className="mt-1 flex justify-between text-[11px] tabular-nums"><span>{LIVE_TEMP_MIN}°C</span><span>{LIVE_TEMP_MAX}°C</span></div>
       <div className="mt-2 text-[10px] normal-case leading-snug text-slate-400">
-        Live = Open-Meteo weather-model air temperature, not satellite. Satellite composites lag about 10 days.
+        Live = Open-Meteo weather-model air temperature, not satellite. {latestObservationLabel(latest)} · satellite data are not live.
       </div>
     </motion.div>
   );
@@ -263,12 +276,14 @@ const StatusCard = memo(function StatusCard({
   layer,
   range,
   period,
+  latest,
   onRetry,
 }: {
   gee: GeeStatus;
   layer: Layer;
   range: RangeId;
   period: Period | null;
+  latest: LatestObservation | null;
   onRetry: () => void;
 }) {
   const R = RANGES[range];
@@ -305,7 +320,8 @@ const StatusCard = memo(function StatusCard({
               {gee.state === "ready" && (
                 <p className="text-slate-300">
                   MODIS satellite composite · {R.label}
-                  {period?.start && <span className="block text-slate-500">{period.start} to {period.end} · about 10 days behind, not live.</span>}
+                  {period?.start && <span className="block text-slate-500">{period.start} to {period.end}</span>}
+                  <span className="block text-slate-500">{latestObservationLabel(latest)} · satellite data are not live.</span>
                 </p>
               )}
               {gee.state === "error" && (
@@ -380,6 +396,7 @@ const Inspector = memo(function Inspector({ sel, range, onClose }: { sel: Sel; r
           </div>
           <div className={`mt-1 text-[10px] ${stateLine[sel.state].cls}`}>{stateLine[sel.state].text}</div>
           {sel.samplePeriod?.start && <div className="mt-1 text-[10px] text-slate-500">Composite window: {sel.samplePeriod.start} to {sel.samplePeriod.end}.</div>}
+          <div className="mt-1 text-[10px] leading-snug text-slate-500">{latestObservationLabel(sel.sampleLatest ?? null)} · satellite data are not live.</div>
           {sel.sampleNote && <div className="mt-1 text-[10px] leading-snug text-slate-400">{sel.sampleNote}</div>}
         </div>
         <button onClick={onClose} className="text-slate-500 transition-colors hover:text-white" aria-label="Close">
@@ -428,7 +445,7 @@ const Inspector = memo(function Inspector({ sel, range, onClose }: { sel: Sel; r
         )}
         <p className="mt-1 text-[10px] normal-case leading-snug text-slate-500">
           Open-Meteo weather model · air at 2 m
-          {sel.air?.time ? ` · ${sel.air.time.slice(11, 16)} local` : ""}. The MODIS surface value above is a satellite composite, about 10 days behind and not live.
+          {sel.air?.time ? ` · ${sel.air.time.slice(11, 16)} local` : ""}. The MODIS surface value above is a satellite composite, not live.
         </p>
       </div>
     </motion.aside>
@@ -442,7 +459,7 @@ export default function ExplorePage() {
   const mapRef = useRef<maplibregl.Map | null>(null);
   const markerRef = useRef<maplibregl.Marker | null>(null);
   const beforeIdRef = useRef<string | undefined>(undefined);
-  const urlCache = useRef<Record<string, { url: string; period: Period }>>({});
+  const urlCache = useRef<Record<string, { url: string; period: Period; latest: LatestObservation | null }>>({});
   const activeGee = useRef<string | null>(null);
   const activeSlot = useRef<Slot | null>(null);
   const pendingRef = useRef<{ slot: Slot; key: string; seq: number } | null>(null);
@@ -470,6 +487,7 @@ export default function ExplorePage() {
   const [viewMode, setViewMode] = useState<ViewMode>("cinematic");
   const [gee, setGee] = useState<GeeStatus>({ state: "idle" });
   const [geePeriod, setGeePeriod] = useState<Period | null>(null);
+  const [geeLatest, setGeeLatest] = useState<LatestObservation | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [results, setResults] = useState<Place[]>([]);
   const [open, setOpen] = useState(false);
@@ -593,6 +611,7 @@ export default function ExplorePage() {
           beforeIdRef.current
         );
         setGeePeriod(entry.period);
+        setGeeLatest(entry.latest);
 
         // Safety net: if the "fully loaded" event never fires, reveal the layer anyway.
         promoteTimer.current = setTimeout(() => {
@@ -640,6 +659,7 @@ export default function ExplorePage() {
                 equity: equityScore(lst, ndvi, sampleRange),
                 sampleRange,
                 samplePeriod: real.period,
+                sampleLatest: real.latest ?? null,
                 sampleNote: real.note,
                 state: real.status === "water" ? "water" : lst == null && ndvi == null ? "nodata" : "ok",
               }
@@ -1299,9 +1319,9 @@ export default function ExplorePage() {
           </button>
         </motion.div>
 
-        <StatusCard gee={gee} layer={layer} range={range} period={geePeriod} onRetry={handleRetryLayer} />
+        <StatusCard gee={gee} layer={layer} range={range} period={geePeriod} latest={geeLatest} onRetry={handleRetryLayer} />
 
-        {liveMode ? <LiveLegend /> : <Legend layer={layer} range={range} period={geePeriod} />}
+        {liveMode ? <LiveLegend latest={geeLatest} /> : <Legend layer={layer} range={range} period={geePeriod} latest={geeLatest} />}
 
         <AnimatePresence>
           {sel && <Inspector key="inspector" sel={sel} range={range} onClose={closeInspector} />}

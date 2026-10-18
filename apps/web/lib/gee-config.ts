@@ -3,10 +3,10 @@
  * Keep this file free of server-only imports.
  */
 
-export type RangeId = "30d" | "90d" | "365d" | "peak";
+export type RangeId = "7d" | "30d" | "90d" | "365d" | "peak";
 export type LayerId = "lst" | "ndvi" | "equity";
 
-export const RANGE_ORDER: RangeId[] = ["30d", "90d", "365d", "peak"];
+export const RANGE_ORDER: RangeId[] = ["7d", "30d", "90d", "365d", "peak"];
 
 export const RANGES: Record<
   RangeId,
@@ -20,6 +20,15 @@ export const RANGES: Record<
     blurb: string;
   }
 > = {
+  "7d": {
+    label: "Last 7 days",
+    short: "7 days",
+    days: 7,
+    stat: "mean",
+    lstMin: 24,
+    lstMax: 46,
+    blurb: "Average of the freshest daily passes (cloud gaps are common)",
+  },
   "30d": {
     label: "Last 30 days",
     short: "30 days",
@@ -27,7 +36,7 @@ export const RANGES: Record<
     stat: "mean",
     lstMin: 24,
     lstMax: 46,
-    blurb: "Average of the most recent satellite composites",
+    blurb: "Average of the daily passes over the last month",
   },
   "90d": {
     label: "Last 3 months",
@@ -69,17 +78,17 @@ export const PALETTES: Record<LayerId, string[]> = {
   equity: ["#feebe2", "#fbb4b9", "#f768a1", "#c51b8a", "#7a0177"],
 };
 
-export function isRange(value: unknown): value is RangeId {
-  return typeof value === "string" && Object.prototype.hasOwnProperty.call(RANGES, value);
+export function isRange(v: unknown): v is RangeId {
+  return typeof v === "string" && Object.prototype.hasOwnProperty.call(RANGES, v);
 }
 
-const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
+const c01 = (x: number) => Math.min(1, Math.max(0, x));
 
 /** Same formula the server uses to paint the equity tiles, so panel values match the map. */
 export function equityScore(lst: number | null, ndvi: number | null, range: RangeId): number | null {
   if (lst == null || ndvi == null) return null;
   const { lstMin, lstMax } = RANGES[range];
-  const heat = clamp01((lst - lstMin) / (lstMax - lstMin));
-  const vegetation = clamp01(ndvi / NDVI_MAX);
-  return Math.round((EQUITY_W.heat * heat + EQUITY_W.bare * (1 - vegetation)) * 100);
+  const t = c01((lst - lstMin) / (lstMax - lstMin));
+  const v = c01(ndvi / NDVI_MAX);
+  return Math.round((EQUITY_W.heat * t + EQUITY_W.bare * (1 - v)) * 100);
 }

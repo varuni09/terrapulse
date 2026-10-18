@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse, connection } from "next/server";
 import { initializeEarthEngine } from "@/lib/gee";
-import { imageFor, period, visFor } from "@/lib/gee-images";
+import { imageFor, latestObservation, period, visFor } from "@/lib/gee-images";
 import { isRange, type LayerId, type RangeId } from "@/lib/gee-config";
 
 // Map ids are cached for a few hours and shared by every visitor, one per layer + time range.
@@ -56,7 +56,8 @@ export async function GET(request: NextRequest) {
         range: rangeParam,
         tileUrl,
         units: layer === "ndvi" ? "NDVI" : layer === "equity" ? "risk 0-100" : "°C",
-        period: period(rangeParam),
+        period: period(rangeParam, layer === "ndvi" ? "ndvi" : "lst"),
+        latest: await latestObservation(rangeParam).catch(() => null),
       },
       { headers: { "Cache-Control": "private, max-age=600" } }
     );
