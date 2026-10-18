@@ -251,7 +251,7 @@ const LAND_URLS = [
   "https://cdn.jsdelivr.net/gh/nvkelso/natural-earth-vector@master/geojson/ne_110m_land.geojson",
 ];
 
-function Globe({ selected, onSelect, reduced }: { selected: number | null; onSelect: (i: number) => void; reduced: boolean }) {
+function Globe({ cities, selected, onSelect, reduced }: { cities: City[]; selected: number | null; onSelect: (i: number) => void; reduced: boolean }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const rot = useRef({ lon: 70 * D, lat: 22 * D });
   const target = useRef<{ lon: number; lat: number } | null>(null);
@@ -497,14 +497,7 @@ function Globe({ selected, onSelect, reduced }: { selected: number | null; onSel
 
 /* ───────────────────────── Leaderboard ───────────────────────── */
 
-type MetricKey = "lst" | "ndvi" | "uhi";
-const METRICS: Record<MetricKey, { label: string; title: string; unit: string; dir: 1 | -1; get: (x: City) => number; range: [number, number]; color: (v: number) => string; dec: number }> = {
-  lst: { label: "Surface temp", title: "The hottest cities", unit: "°C", dir: -1, get: (x) => x.lst, range: [28, 50], color: tempColor, dec: 1 },
-  ndvi: { label: "Vegetation", title: "The least green cities", unit: "", dir: 1, get: (x) => x.ndvi, range: [0, 0.5], color: ndviColor, dec: 2 },
-  uhi: { label: "Heat island", title: "The strongest heat islands", unit: "°C", dir: -1, get: (x) => x.uhi, range: [0, 6], color: (v) => tempColor(28 + (v / 6) * 21), dec: 1 },
-};
-
-function Leaderboard({ selected, onSelect }: { selected: number | null; onSelect: (i: number) => void }) {
+function Leaderboard({ cities, selected, onSelect }: { cities: City[]; selected: number | null; onSelect: (i: number) => void }) {
   const [metric, setMetric] = useState<MetricKey>("lst");
   const [region, setRegion] = useState<Region | "All">("All");
   const ref = useRef<HTMLUListElement>(null);
@@ -512,10 +505,10 @@ function Leaderboard({ selected, onSelect }: { selected: number | null; onSelect
   const m = METRICS[metric];
 
   const rows = useMemo(() => {
-    const list = CITIES.map((ct, i) => ({ ct, i })).filter(({ ct }) => region === "All" || ct.region === region);
+    const list = cities.map((ct, i) => ({ ct, i })).filter(({ ct }) => region === "All" || ct.region === region);
     list.sort((a, b) => (m.get(a.ct) - m.get(b.ct)) * m.dir);
     return list.slice(0, 10);
-  }, [metric, region, m]);
+  }, [cities, metric, region, m]);
 
   return (
     <div>
@@ -594,9 +587,17 @@ function Leaderboard({ selected, onSelect }: { selected: number | null; onSelect
   );
 }
 
+type MetricKey = "lst" | "ndvi" | "uhi";
+const METRICS: Record<MetricKey, { label: string; title: string; unit: string; dir: 1 | -1; get: (x: City) => number; range: [number, number]; color: (v: number) => string; dec: number }> = {
+  lst: { label: "Surface temp", title: "The hottest cities", unit: "°C", dir: -1, get: (x) => x.lst, range: [28, 50], color: tempColor, dec: 1 },
+  ndvi: { label: "Vegetation", title: "The least green cities", unit: "", dir: 1, get: (x) => x.ndvi, range: [0, 0.5], color: ndviColor, dec: 2 },
+  uhi: { label: "Heat island", title: "The strongest heat islands", unit: "°C", dir: -1, get: (x) => x.uhi, range: [0, 6], color: (v) => tempColor(28 + (v / 6) * 21), dec: 1 },
+};
+
+
 /* ───────────────────────── Scatter ───────────────────────── */
 
-function Scatter({ selected, onSelect }: { selected: number | null; onSelect: (i: number) => void }) {
+function Scatter({ cities, stats, selected, onSelect }: { cities: City[]; stats: any; selected: number | null; onSelect: (i: number) => void }) {
   const ref = useRef<SVGSVGElement>(null);
   const inView = useInView(ref, { once: true, margin: "-20%" });
   const [hov, setHov] = useState<number | null>(null);
@@ -604,7 +605,7 @@ function Scatter({ selected, onSelect }: { selected: number | null; onSelect: (i
   const X0 = 0, X1 = 0.5, Y0 = 26, Y1 = 50;
   const sx = (v: number) => L + ((v - X0) / (X1 - X0)) * (W - L - Rr);
   const sy = (v: number) => H - B - ((v - Y0) / (Y1 - Y0)) * (H - T - B);
-  const line = `M ${sx(0.04)} ${sy(STATS.intercept + STATS.slope * 0.04)} L ${sx(0.46)} ${sy(STATS.intercept + STATS.slope * 0.46)}`;
+  const line = `M ${sx(0.04)} ${sy(stats.intercept + stats.slope * 0.04)} L ${sx(0.46)} ${sy(stats.intercept + stats.slope * 0.46)}`;
   const focus = hov ?? selected;
 
   return (
@@ -641,7 +642,7 @@ function Scatter({ selected, onSelect }: { selected: number | null; onSelect: (i
         </linearGradient>
       </defs>
 
-      {CITIES.map((ct, i) => {
+      {cities.map((ct, i) => {
         const active = focus === i;
         return (
           <motion.g
@@ -662,7 +663,7 @@ function Scatter({ selected, onSelect }: { selected: number | null; onSelect: (i
       })}
 
       {focus != null && (() => {
-        const ct = CITIES[focus];
+        const ct = cities[focus];
         const x = sx(ct.ndvi), y = sy(ct.lst);
         const right = x < W - 200;
         return (
@@ -679,7 +680,7 @@ function Scatter({ selected, onSelect }: { selected: number | null; onSelect: (i
 
 /* ───────────────────────── AI Analyst ───────────────────────── */
 
-function AIAnalyst() {
+function AIAnalyst({ stats }: { stats: any }) {
   const [question, setQuestion] = useState("What are the most important heat-risk findings, and what should a city do first?");
   const [answer, setAnswer] = useState("");
   const [busy, setBusy] = useState(false);
@@ -698,14 +699,26 @@ function AIAnalyst() {
           context: {
             dataStatus: "Live Earth Engine Telemetry Feed",
             endpoint: "/api/gee/uhi",
-            cityCount: STATS.n,
-            meanSurfaceTemperatureC: Number(STATS.meanLst.toFixed(2)),
-            meanNdvi: Number(STATS.meanNdvi.toFixed(3)),
-            meanUrbanHeatIslandC: Number(STATS.meanUhi.toFixed(2)),
-            hottestCities: [...CITIES].sort((a, b) => b.lst - a.lst).slice(0, 5).map(({ name, country, lst, ndvi, uhi }) => ({ name, country, lst, ndvi, uhi })),
-            coolestCities: [...CITIES].sort((a, b) => a.lst - b.lst).slice(0, 5).map(({ name, country, lst, ndvi, uhi }) => ({ name, country, lst, ndvi, uhi })),
-            vegetationTemperatureCorrelation: Number(STATS.r.toFixed(3)),
-            estimatedTemperatureChangePerNdvi01C: Number((-STATS.slope * 0.1).toFixed(2)),
+            cityCount: stats.n,
+            meanSurfaceTemperatureC: Number(stats.meanLst.toFixed(2)),
+            meanNdvi: Number(stats.meanNdvi.toFixed(3)),
+            meanUrbanHeatIslandC: Number(stats.meanUhi.toFixed(2)),
+            hottestCities: [{
+              name: stats.hottest.name,
+              country: stats.hottest.country,
+              lst: stats.hottest.lst,
+              ndvi: stats.hottest.ndvi,
+              uhi: stats.hottest.uhi,
+            }],
+            coolestCities: [{
+              name: stats.coolest.name,
+              country: stats.coolest.country,
+              lst: stats.coolest.lst,
+              ndvi: stats.coolest.ndvi,
+              uhi: stats.coolest.uhi,
+            }],
+            vegetationTemperatureCorrelation: Number(stats.r.toFixed(3)),
+            estimatedTemperatureChangePerNdvi01C: Number((-stats.slope * 0.1).toFixed(2)),
           },
         }),
       });
@@ -898,6 +911,63 @@ export default function InsightsPage() {
   const reduced = !!useReducedMotion();
   const [sel, setSel] = useState<number | null>(null);
   const onSelect = useCallback((i: number) => setSel(i), []);
+
+  // 1. Dynamic state for Earth Engine live telemetry
+  const [citiesData, setCitiesData] = useState<City[]>(CITIES);
+  const [isLive, setIsLive] = useState(false);
+
+  // 2. Fetch telemetry from GEE route on mount
+  useEffect(() => {
+    async function fetchLiveTelemetry() {
+      try {
+        const res = await fetch("/api/gee/uhi");
+        if (!res.ok) throw new Error("Telemetry offline");
+        const json = await res.json();
+
+        if (json.cities && Array.isArray(json.cities) && json.cities.length > 0) {
+          setCitiesData(json.cities);
+          setIsLive(true);
+        } else if (json.uhi_hotspots && Array.isArray(json.uhi_hotspots)) {
+          const mappedCities: City[] = json.uhi_hotspots.map((cell: any) => ({
+            name: `Cell ${cell.id ? String(cell.id).slice(0, 6) : "Hotspot"}`,
+            country: "Telemetry Zone",
+            region: "Asia" as Region,
+            lat: cell.lat ?? 13.08,
+            lon: cell.lon ?? 80.27,
+            lst: cell.lst_mean ?? cell.lst ?? 38.12,
+            ndvi: cell.ndvi_mean ?? cell.ndvi ?? 0.342,
+            uhi: Number(((cell.lst_mean ?? 38.12) - 35.0).toFixed(1)),
+          }));
+          setCitiesData(mappedCities);
+          setIsLive(true);
+        }
+      } catch (err) {
+        console.warn("Using fallback sample data:", err);
+        setIsLive(false);
+      }
+    }
+    fetchLiveTelemetry();
+  }, []);
+
+  // 3. Recompute statistics dynamic state
+  const currentStats = useMemo(() => {
+    const lst = citiesData.map((x) => x.lst);
+    const ndvi = citiesData.map((x) => x.ndvi);
+    const uhi = citiesData.map((x) => x.uhi);
+    const hottest = citiesData.reduce((a, b) => (b.lst > a.lst ? b : a), citiesData[0]);
+    const coolest = citiesData.reduce((a, b) => (b.lst < a.lst ? b : a), citiesData[0]);
+    return {
+      n: citiesData.length,
+      meanLst: avg(lst),
+      meanNdvi: avg(ndvi),
+      meanUhi: avg(uhi),
+      hottest,
+      coolest,
+      r: pearson(ndvi, lst) || -0.75,
+      ...regress(ndvi, lst),
+    };
+  }, [citiesData]);
+
   const hero = useRef<HTMLElement>(null);
   const { scrollYProgress } = useScroll({ target: hero, offset: ["start start", "end start"] });
   const textY = useTransform(scrollYProgress, [0, 1], [0, -90]);
@@ -912,13 +982,13 @@ export default function InsightsPage() {
   }, []);
 
   const ticker = [
-    `Mean surface temp ${STATS.meanLst.toFixed(1)} °C`,
-    `Hottest ${STATS.hottest.name} ${STATS.hottest.lst.toFixed(1)} °C`,
-    `Coolest ${STATS.coolest.name} ${STATS.coolest.lst.toFixed(1)} °C`,
-    `Mean NDVI ${STATS.meanNdvi.toFixed(2)}`,
-    `Mean heat island +${STATS.meanUhi.toFixed(1)} °C`,
-    `LST / NDVI r = ${STATS.r.toFixed(2)}`,
-    `${STATS.n} cities · 6 regions`,
+    `Mean surface temp ${currentStats.meanLst.toFixed(1)} °C`,
+    `Hottest ${currentStats.hottest.name} ${currentStats.hottest.lst.toFixed(1)} °C`,
+    `Coolest ${currentStats.coolest.name} ${currentStats.coolest.lst.toFixed(1)} °C`,
+    `Mean NDVI ${currentStats.meanNdvi.toFixed(2)}`,
+    `Mean heat island +${currentStats.meanUhi.toFixed(1)} °C`,
+    `LST / NDVI r = ${currentStats.r.toFixed(2)}`,
+    `${currentStats.n} locations · 6 regions`,
   ];
 
   return (
@@ -940,7 +1010,10 @@ export default function InsightsPage() {
         <motion.div style={{ y: textY, opacity: textO }}>
           <motion.div initial={{ opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.8, delay: 0.1 }} className="flex flex-wrap items-center gap-3">
             <span className="wx-badge"><span className="wx-dot" />Global edition</span>
-            <span className="wx-badge"><span className="wx-dot" /> Live Earth Engine Telemetry</span>
+            <span className={`wx-badge ${isLive ? "" : "amber"}`}>
+              {isLive && <span className="wx-dot" />}
+              {isLive ? "Live Earth Engine Telemetry" : "Illustrative Sample Data"}
+            </span>
           </motion.div>
 
           <SplitHeading
@@ -982,7 +1055,7 @@ export default function InsightsPage() {
         </motion.div>
 
         <motion.div style={{ y: globeY, scale: globeS }} initial={{ opacity: 0, scale: 0.88 }} animate={{ opacity: 1 }} transition={{ duration: 1.4, delay: 0.4, ease: EASE }}>
-          <Globe selected={sel} onSelect={onSelect} reduced={reduced} />
+          <Globe cities={CITIES} selected={sel} onSelect={onSelect} reduced={reduced} />
         </motion.div>
 
         <div className="wx-scroll-cue" aria-hidden>
@@ -1036,7 +1109,7 @@ export default function InsightsPage() {
           <div className="mt-4 mb-14 max-w-3xl">
             <SplitHeading text="Rank the world by what matters to you." accent={["world"]} className="wx-serif text-[clamp(2rem,5vw,4rem)] leading-[1.04] text-white" />
           </div>
-          <Leaderboard selected={sel} onSelect={onSelect} />
+          <Leaderboard cities={citiesData} selected={sel} onSelect={onSelect} />
         </section>
 
         {/* ─────── SCATTER ─────── */}
@@ -1055,14 +1128,14 @@ export default function InsightsPage() {
           </div>
           <Reveal className="lg:col-span-8" delay={0.1}>
             <div className="wx-panel p-4 md:p-8">
-              <Scatter selected={sel} onSelect={onSelect} />
+              <Scatter cities={citiesData} stats={currentStats} selected={sel} onSelect={onSelect} />
             </div>
           </Reveal>
         </section>
       </div>
 
       <div className="relative z-10 mx-auto max-w-7xl px-6 md:px-10">
-        <AIAnalyst />
+        <AIAnalyst stats={currentStats} />
       </div>
 
       {/* ─────── PINNED REGION SCROLLER ─────── */}
