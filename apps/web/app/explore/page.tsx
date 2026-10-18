@@ -9,6 +9,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import { Fraunces, JetBrains_Mono } from "next/font/google";
 import { cellArea, cellToBoundary, cellToLatLng, gridDisk, latLngToCell } from "h3-js";
 import { NDVI_MAX, PALETTES, RANGES, RANGE_ORDER, equityScore, type LayerId, type RangeId } from "../../lib/gee-config";
+import { LandsatProvenanceCard } from "@/components/LandsatProvenanceCard";
 
 const display = Fraunces({ subsets: ["latin"], variable: "--font-display" });
 const mono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-mono" });
@@ -630,6 +631,9 @@ const Inspector = memo(function Inspector({
           Open-Meteo weather model · air at 2 m
           {sel.air?.time ? ` · ${sel.air.time.slice(11, 16)} local` : ""}. The MODIS surface value above is a satellite composite, not live.
         </p>
+      </div>
+      <div className="mt-4">
+        <LandsatProvenanceCard lat={sel.lat} lon={sel.lon} />
       </div>
     </motion.aside>
   );
