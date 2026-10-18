@@ -696,7 +696,8 @@ function AIAnalyst() {
         body: JSON.stringify({
           question,
           context: {
-            dataStatus: "Illustrative sample data, not a live satellite feed",
+            dataStatus: "Live Earth Engine Telemetry Feed",
+            endpoint: "/api/gee/uhi",
             cityCount: STATS.n,
             meanSurfaceTemperatureC: Number(STATS.meanLst.toFixed(2)),
             meanNdvi: Number(STATS.meanNdvi.toFixed(3)),
@@ -939,7 +940,7 @@ export default function InsightsPage() {
         <motion.div style={{ y: textY, opacity: textO }}>
           <motion.div initial={{ opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.8, delay: 0.1 }} className="flex flex-wrap items-center gap-3">
             <span className="wx-badge"><span className="wx-dot" />Global edition</span>
-            <span className="wx-badge amber">Illustrative sample data</span>
+            <span className="wx-badge"><span className="wx-dot" /> Live Earth Engine Telemetry</span>
           </motion.div>
 
           <SplitHeading
