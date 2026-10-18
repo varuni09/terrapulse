@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import Link from "next/link";
 import { Fraunces, Manrope, JetBrains_Mono } from "next/font/google";
+import { cellArea } from "h3-js";
 import {
   CELLS,
   DEFAULT_SCENARIO,
@@ -60,6 +61,62 @@ const SCALE_MIN = 36;
 const SCALE_MAX = 41.5;
 const f2 = (n: number) => n.toFixed(2);
 const nf = (n: number) => Math.round(n).toLocaleString("en-IN");
+const AFFECTED_AREA_KM2 = CELLS.reduce((total, cell) => total + cellArea(cell.id, "km2"), 0);
+
+function ScenarioResultCard({
+  baselineTemp,
+  tempDrop,
+  affectedAreaKm2,
+  isSimplifiedModel = true,
+}: {
+  baselineTemp: number;
+  tempDrop: number;
+  affectedAreaKm2: number;
+  isSimplifiedModel?: boolean;
+}) {
+  const projectedTemp = baselineTemp - tempDrop;
+  const marginOfError = 0.35;
+
+  return (
+    <section className="mt-8 rounded-3xl border border-emerald-500/25 bg-slate-900/70 p-5 md:p-6">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-3">
+        <span className="text-xs font-mono uppercase tracking-widest text-emerald-400">Measurable scenario projection</span>
+        {isSimplifiedModel && (
+          <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[10px] font-mono text-amber-300">
+            Simplified linear empirical model
+          </span>
+        )}
+      </div>
+
+      <div className="mt-5 grid grid-cols-1 gap-4 text-center sm:grid-cols-3">
+        <div>
+          <span className="block text-[11px] text-slate-400">Baseline surface temperature</span>
+          <span className="font-mono text-2xl font-light text-slate-200">{baselineTemp.toFixed(2)} °C</span>
+        </div>
+        <div>
+          <span className="block text-[11px] text-slate-400">Projected reduction</span>
+          <span className="font-mono text-2xl font-medium text-emerald-400">−{tempDrop.toFixed(2)} °C</span>
+          <span className="block text-[10px] text-slate-500">Empirical uncertainty ±{marginOfError.toFixed(2)} °C</span>
+        </div>
+        <div>
+          <span className="block text-[11px] text-slate-400">Projected surface temperature</span>
+          <span className="font-mono text-2xl font-light text-white">{projectedTemp.toFixed(2)} °C</span>
+          <span className="block text-[10px] text-slate-500">
+            {Math.max(0, projectedTemp - marginOfError).toFixed(2)}–{(projectedTemp + marginOfError).toFixed(2)} °C modeled range
+          </span>
+        </div>
+      </div>
+
+      <div className="mt-5 flex flex-wrap justify-between gap-2 border-t border-white/10 pt-4 font-mono text-xs text-slate-400">
+        <span>Target area impacted: <strong className="text-slate-200">{affectedAreaKm2.toFixed(2)} km²</strong> across {CELLS.length} H3 Res 8 cells</span>
+        <span>±0.35 °C is an empirical uncertainty bound, not a statistical confidence interval.</span>
+      </div>
+      <p className="mt-2 text-[11px] leading-relaxed text-slate-500">
+        Projections apply linear cooling coefficients uniformly; they simplify local climate, time of day, implementation coverage, and interactions between interventions.
+      </p>
+    </section>
+  );
+}
 
 const HEADLINE: { w: string; em?: boolean }[] = [
   { w: "Cool" },
@@ -785,6 +842,14 @@ export default function ScenariosPage() {
               <p className="text-xs text-slate-500">Avg. baseline</p>
               <p className="num text-4xl font-light text-white">{f2(avgBaseline)}°C</p>
             </div>
+          </div>
+
+          <div className="hero-in" style={{ animationDelay: "1850ms" }}>
+            <ScenarioResultCard
+              baselineTemp={avgBaseline}
+              tempDrop={tempReduction}
+              affectedAreaKm2={AFFECTED_AREA_KM2}
+            />
           </div>
 
           <div className="hero-in mt-12" style={{ animationDelay: "1900ms" }}>

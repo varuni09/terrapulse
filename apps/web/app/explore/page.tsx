@@ -7,6 +7,7 @@ import AiAnalyst from "../components/AiAnalyst";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { Fraunces, JetBrains_Mono } from "next/font/google";
+import { cellArea, cellToBoundary, cellToLatLng, gridDisk, latLngToCell } from "h3-js";
 import { NDVI_MAX, PALETTES, RANGES, RANGE_ORDER, equityScore, type LayerId, type RangeId } from "../../lib/gee-config";
 
 const display = Fraunces({ subsets: ["latin"], variable: "--font-display" });
@@ -21,6 +22,8 @@ type Slot = "a" | "b";
 type Sel = {
   lat: number;
   lon: number;
+  h3Index: string;
+  h3AreaKm2: number;
   lst: number | null;
   ndvi: number | null;
   equity: number | null;
@@ -67,6 +70,30 @@ type LiveGrid = {
 };
 type LiveGridWorkerResponse = { id: number; blob?: Blob; error?: string };
 type LiveGridStatus = "idle" | "loading" | "ready" | "error" | "zoom";
+type HotspotCity = { name: string; country: string; lat: number; lon: number; lst: number; airNow?: number; lstNow?: number };
+type CompareStatus = "idle" | "loading" | "ready" | "error";
+type DecisionExportData = {
+  id: string;
+  name: string;
+  lat: number;
+  lon: number;
+  h3AreaKm2: number;
+  lst: number | null;
+  ndvi: number | null;
+  equity: number | null;
+  sampleRange: RangeId;
+  samplePeriod: Period | null;
+  latest: LatestObservation | null;
+};
+type HotspotStatus = "loading" | "ready" | "error";
+type PeriodComparison = {
+  range: RangeId;
+  usedRange: RangeId | null;
+  lst: number | null;
+  ndvi: number | null;
+  period: Period | null;
+  status: "ok" | "water" | "no_data";
+};
 
 /* ───────────────────────── constants ───────────────────────── */
 
@@ -198,6 +225,14 @@ function updatedClock(value: string | null) {
   return value ? new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
 }
 
+function isHotspotCity(value: unknown): value is HotspotCity {
+  if (!value || typeof value !== "object") return false;
+  const city = value as Record<string, unknown>;
+  return city.live === true && typeof city.name === "string" && typeof city.country === "string" &&
+    typeof city.lat === "number" && Number.isFinite(city.lat) && typeof city.lon === "number" &&
+    Number.isFinite(city.lon) && typeof city.lst === "number" && Number.isFinite(city.lst);
+}
+
 async function geocode(q: string): Promise<Place | null> {
   try {
     const r = await fetch(
@@ -270,6 +305,63 @@ const LiveLegend = memo(function LiveLegend({ latest }: { latest: LatestObservat
     </motion.div>
   );
 });
+
+function saveBlob(name: string, content: Blob) {
+  const url = URL.createObjectURL(content);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function ExportDecisionPanel({ selectedCellData }: { selectedCellData: DecisionExportData | null }) {
+  const exportCSV = () => {
+    if (!selectedCellData) return;
+    const csvValue = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+    const rows: [string, unknown][] = [
+      ["Cell_ID", selectedCellData.id], ["Location", selectedCellData.name],
+      ["Latitude", selectedCellData.lat], ["Longitude", selectedCellData.lon],
+      ["Affected_Area_km2", selectedCellData.h3AreaKm2], ["Surface_Temp_C", selectedCellData.lst],
+      ["NDVI", selectedCellData.ndvi], ["Heat_Equity_Risk", selectedCellData.equity],
+      ["Sample_Range", selectedCellData.sampleRange],
+      ["Period_Start", selectedCellData.samplePeriod?.start], ["Period_End", selectedCellData.samplePeriod?.end],
+      ["Latest_Image_Date", selectedCellData.latest?.date], ["Latest_Image_Source", selectedCellData.latest?.source],
+    ];
+    saveBlob(`terrapulse_${selectedCellData.id}.csv`, new Blob([rows.map(([field, value]) => `${field},${csvValue(value)}`).join("\r\n")], { type: "text/csv;charset=utf-8" }));
+  };
+
+  const exportGeoJSON = () => {
+    if (!selectedCellData) return;
+    const boundary = cellToBoundary(selectedCellData.id, true) as [number, number][];
+    const ring = [...boundary, boundary[0]];
+    const feature = {
+      type: "Feature",
+      geometry: { type: "Polygon", coordinates: [ring] },
+      properties: {
+        ...selectedCellData,
+        samplingMethod: "MODIS metrics sampled over a 1.5 km radius buffer centered at this H3 Res 8 cell.",
+      },
+    };
+    saveBlob(`terrapulse_${selectedCellData.id}.geojson`, new Blob([JSON.stringify(feature, null, 2)], { type: "application/geo+json" }));
+  };
+
+  if (!selectedCellData) return null;
+
+  return (
+    <div className="mt-4 grid grid-cols-2 gap-2">
+      <button type="button" onClick={exportCSV} className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-[10px] font-medium text-emerald-300 transition hover:bg-emerald-500/20">
+        Export cell CSV
+      </button>
+      <button type="button" onClick={exportGeoJSON} className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-[10px] font-medium text-emerald-300 transition hover:bg-emerald-500/20">
+        Export H3 GeoJSON
+      </button>
+      <button type="button" onClick={() => window.print()} className="col-span-2 rounded-xl border border-white/15 bg-slate-800/80 px-3 py-2 text-[10px] font-medium text-slate-200 transition hover:bg-slate-700">
+        Print selected-cell report
+      </button>
+    </div>
+  );
+}
 
 const StatusCard = memo(function StatusCard({
   gee,
@@ -344,9 +436,49 @@ const StatusCard = memo(function StatusCard({
   );
 });
 
-const Inspector = memo(function Inspector({ sel, range, onClose }: { sel: Sel; range: RangeId; onClose: () => void }) {
+const Inspector = memo(function Inspector({
+  sel,
+  range,
+  onClose,
+  onSelectCell,
+  compareRange,
+  onCompareRangeChange,
+  comparison,
+  compareStatus,
+  onCompare,
+  hotspots,
+  hotspotStatus,
+  onSelectHotspot,
+}: {
+  sel: Sel;
+  range: RangeId;
+  onClose: () => void;
+  onSelectCell: (cellId: string) => void;
+  compareRange: RangeId;
+  onCompareRangeChange: (range: RangeId) => void;
+  comparison: PeriodComparison | null;
+  compareStatus: CompareStatus;
+  onCompare: () => void;
+  hotspots: HotspotCity[];
+  hotspotStatus: HotspotStatus;
+  onSelectHotspot: (city: HotspotCity) => void;
+}) {
   const sampleRange = sel.sampleRange ?? range;
   const R = RANGES[sampleRange];
+  const neighborhood = gridDisk(sel.h3Index, 1);
+  const exportData: DecisionExportData = {
+    id: sel.h3Index,
+    name: sel.name ?? `H3 Res 8 ${sel.h3Index}`,
+    lat: sel.lat,
+    lon: sel.lon,
+    h3AreaKm2: sel.h3AreaKm2,
+    lst: sel.lst,
+    ndvi: sel.ndvi,
+    equity: sel.equity,
+    sampleRange,
+    samplePeriod: sel.samplePeriod ?? null,
+    latest: sel.sampleLatest ?? null,
+  };
 
   const bars: { key: Layer; label: string; text: string; pct: number }[] = [
     {
@@ -394,6 +526,13 @@ const Inspector = memo(function Inspector({ sel, range, onClose }: { sel: Sel; r
           <div className="mt-0.5 text-[10px] tabular-nums text-slate-500">
             {sel.lat.toFixed(4)}°, {sel.lon.toFixed(4)}°
           </div>
+          <div className="mt-1 text-[10px] text-slate-400">H3 Res 8 · {sel.h3Index} · {sel.h3AreaKm2.toFixed(3)} km²</div>
+          <label className="mt-2 block text-[10px] uppercase text-slate-500">
+            Neighborhood cell
+            <select value={sel.h3Index} onChange={(event) => onSelectCell(event.target.value)} className="mt-1 w-full rounded-lg border border-white/10 bg-slate-950 px-2 py-1.5 text-[10px] normal-case text-slate-200">
+              {neighborhood.map((cellId) => <option key={cellId} value={cellId}>{cellId === sel.h3Index ? "Selected cell · " : "Neighbor · "}{cellId}</option>)}
+            </select>
+          </label>
           <div className={`mt-1 text-[10px] ${stateLine[sel.state].cls}`}>{stateLine[sel.state].text}</div>
           {sel.samplePeriod?.start && <div className="mt-1 text-[10px] text-slate-500">Composite window: {sel.samplePeriod.start} to {sel.samplePeriod.end}.</div>}
           <div className="mt-1 text-[10px] leading-snug text-slate-500">{latestObservationLabel(sel.sampleLatest ?? null)} · satellite data are not live.</div>
@@ -420,6 +559,50 @@ const Inspector = memo(function Inspector({ sel, range, onClose }: { sel: Sel; r
           </div>
         ))}
       </div>
+
+      <div className="mt-4 rounded-xl border border-white/10 bg-slate-900/60 p-3 text-[11px] text-slate-400">
+        <span className="mb-1 block font-semibold text-amber-400">Skin Temp (LST) Note</span>
+        Surface temperature reflects ground skin radiative thermal heat, which can run 4–12 °C higher than 2m ambient air weather forecasts during daytime peak hours.
+      </div>
+
+      <section className="mt-4 rounded-xl border border-white/10 bg-black/20 p-3">
+        <h5 className="text-[10px] font-semibold uppercase tracking-wider text-slate-300">Temporal period comparison</h5>
+        <div className="mt-2 flex gap-2">
+          <select value={compareRange} onChange={(event) => onCompareRangeChange(event.target.value as RangeId)} className="min-w-0 flex-1 rounded-lg border border-white/10 bg-slate-950 px-2 py-1.5 text-[10px] text-slate-200">
+            {RANGE_ORDER.map((periodRange) => <option key={periodRange} value={periodRange}>{RANGES[periodRange].label}</option>)}
+          </select>
+          <button type="button" disabled={compareStatus === "loading"} onClick={onCompare} className="rounded-lg border border-white/10 px-2 py-1 text-[10px] text-slate-200 disabled:opacity-50">
+            {compareStatus === "loading" ? "Loading…" : "Compare"}
+          </button>
+        </div>
+        {comparison && (
+          <div className="mt-2 text-[10px] leading-relaxed text-slate-400">
+            Current {RANGES[sampleRange].short}: LST {sel.lst == null ? "—" : `${sel.lst.toFixed(2)}°C`}, NDVI {sel.ndvi?.toFixed(2) ?? "—"}.<br />
+            {RANGES[comparison.usedRange ?? comparison.range].short}: LST {comparison.lst == null ? "—" : `${comparison.lst.toFixed(2)}°C`}, NDVI {comparison.ndvi?.toFixed(2) ?? "—"}
+            {comparison.period?.start ? ` · ${comparison.period.start} to ${comparison.period.end}` : ""}.
+            {comparison.status === "water" ? " This cell is classified as open water." : comparison.status === "no_data" ? " No valid satellite metrics were found for this period." : ""}
+          </div>
+        )}
+        {compareStatus === "error" && <p role="status" className="mt-2 text-[10px] text-rose-300">Period comparison unavailable.</p>}
+      </section>
+
+      <section className="mt-4 rounded-xl border border-white/10 bg-black/20 p-3">
+        <h5 className="text-[10px] font-semibold uppercase tracking-wider text-slate-300">Live city hotspot ranking</h5>
+        <p className="mt-1 text-[9px] text-slate-500">Daily peak modelled surface temperature · Open-Meteo</p>
+        {hotspotStatus === "loading" && <p className="mt-2 text-[10px] text-slate-400">Loading live city data…</p>}
+        {hotspotStatus === "error" && <p className="mt-2 text-[10px] text-rose-300">Live city ranking unavailable.</p>}
+        {hotspotStatus === "ready" && hotspots.length === 0 && <p className="mt-2 text-[10px] text-slate-400">No live city temperatures available.</p>}
+        <div className="mt-2 space-y-1">
+          {hotspots.slice(0, 5).map((city, index) => (
+            <button key={city.name} type="button" onClick={() => onSelectHotspot(city)} className="flex w-full items-center justify-between gap-2 rounded px-1.5 py-1 text-left text-[10px] hover:bg-white/5">
+              <span className="truncate text-slate-300">{index + 1}. {city.name}</span>
+              <span className="shrink-0 font-mono text-amber-200">{city.lst.toFixed(1)}°C</span>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <ExportDecisionPanel selectedCellData={exportData} />
 
       <div className="mt-5 border-t border-white/10 pt-4">
         <div className="flex items-baseline justify-between text-[10px] uppercase text-slate-400">
@@ -470,6 +653,7 @@ export default function ExplorePage() {
   const retryTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const promoteTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const liveAbort = useRef<AbortController | null>(null);
+  const compareAbort = useRef<AbortController | null>(null);
   const liveMoveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const liveSequence = useRef(0);
   const liveGridRef = useRef<LiveGrid | null>(null);
@@ -496,6 +680,11 @@ export default function ExplorePage() {
   const [liveMode, setLiveMode] = useState(false);
   const [liveStatus, setLiveStatus] = useState<LiveGridStatus>("idle");
   const [liveUpdatedAt, setLiveUpdatedAt] = useState<string | null>(null);
+  const [compareRange, setCompareRange] = useState<RangeId>("90d");
+  const [comparison, setComparison] = useState<PeriodComparison | null>(null);
+  const [compareStatus, setCompareStatus] = useState<CompareStatus>("idle");
+  const [hotspots, setHotspots] = useState<HotspotCity[]>([]);
+  const [hotspotStatus, setHotspotStatus] = useState<HotspotStatus>("loading");
 
   const rangeRef = useRef<RangeId>(range);
   rangeRef.current = range;
@@ -503,6 +692,28 @@ export default function ExplorePage() {
   selRef.current = sel;
   const geeRef = useRef<GeeStatus>(gee);
   geeRef.current = gee;
+
+  useEffect(() => {
+    const controller = new AbortController();
+    (async () => {
+      try {
+        const response = await fetch("/api/live/cities", { cache: "no-store", signal: controller.signal });
+        if (!response.ok) throw new Error(`Live city request failed (${response.status})`);
+        const payload: unknown = await response.json();
+        if (!payload || typeof payload !== "object" || !("cities" in payload) || !Array.isArray(payload.cities)) {
+          throw new Error("Live city response did not include a city list");
+        }
+        const ranked = payload.cities.filter(isHotspotCity).sort((a, b) => b.lst - a.lst);
+        setHotspots(ranked);
+        setHotspotStatus("ready");
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        console.error("Live city hotspot ranking failed:", error);
+        setHotspotStatus("error");
+      }
+    })();
+    return () => controller.abort();
+  }, []);
 
   /* ── layer slots: two raster layers that crossfade, so switching never flashes blank ── */
 
@@ -679,6 +890,66 @@ export default function ExplorePage() {
         setSel((cur) => (same(cur) ? { ...cur!, air: null, airState: "error" } : cur));
       });
   }, []);
+
+  const selectH3Cell = useCallback((cellId: string) => {
+    const [lat, lon] = cellToLatLng(cellId);
+    const h3Index = latLngToCell(lat, lon, 8);
+    const map = mapRef.current;
+    map?.flyTo({ center: [lon, lat], zoom: Math.max(map.getZoom(), 9), duration: 700 });
+    placeMarker(lon, lat);
+    compareAbort.current?.abort();
+    setComparison(null);
+    setCompareStatus("idle");
+    setSel({
+      lat, lon, h3Index, h3AreaKm2: cellArea(h3Index, "km2"),
+      lst: null, ndvi: null, equity: null, air: null, airState: "loading",
+      name: `H3 Res 8 ${h3Index}`, state: "loading",
+    });
+    loadPoint(lat, lon);
+  }, [loadPoint, placeMarker]);
+
+  const selectHotspot = useCallback((city: HotspotCity) => {
+    const map = mapRef.current;
+    map?.flyTo({ center: [city.lon, city.lat], zoom: Math.max(map.getZoom(), 8), duration: 1000 });
+    const h3Index = latLngToCell(city.lat, city.lon, 8);
+    placeMarker(city.lon, city.lat);
+    compareAbort.current?.abort();
+    setComparison(null);
+    setCompareStatus("idle");
+    setSel({
+      lat: city.lat, lon: city.lon, h3Index, h3AreaKm2: cellArea(h3Index, "km2"),
+      lst: null, ndvi: null, equity: null, air: null, airState: "loading",
+      name: `${city.name}, ${city.country}`, state: "loading",
+    });
+    loadPoint(city.lat, city.lon);
+  }, [loadPoint, placeMarker]);
+
+  const compareSelectedPeriod = useCallback(async () => {
+    const selected = selRef.current;
+    if (!selected) return;
+    compareAbort.current?.abort();
+    const controller = new AbortController();
+    compareAbort.current = controller;
+    setCompareStatus("loading");
+    setComparison(null);
+    try {
+      const sample = await fetchEarthEngineSample(selected.lat, selected.lon, compareRange, controller.signal);
+      if (controller.signal.aborted || selRef.current?.h3Index !== selected.h3Index) return;
+      setComparison({
+        range: compareRange,
+        usedRange: sample.usedRange ?? null,
+        lst: sample.data?.lst_c ?? null,
+        ndvi: sample.data?.ndvi ?? null,
+        period: sample.period ?? null,
+        status: sample.status ?? "no_data",
+      });
+      setCompareStatus("ready");
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      console.error("Satellite period comparison failed:", error);
+      setCompareStatus("error");
+    }
+  }, [compareRange]);
 
   const renderLiveGrid = useCallback((grid: LiveGrid) => {
     let worker = liveWorker.current;
@@ -869,10 +1140,16 @@ export default function ExplorePage() {
 
     map.on("click", async (e) => {
       const { lat, lng } = e.lngLat;
+      const h3Index = latLngToCell(lat, lng, 8);
+        compareAbort.current?.abort();
+        setComparison(null);
+        setCompareStatus("idle");
       placeMarker(lng, lat);
       setSel({
         lat,
         lon: lng,
+        h3Index,
+        h3AreaKm2: cellArea(h3Index, "km2"),
         lst: null,
         ndvi: null,
         equity: null,
@@ -1109,12 +1386,18 @@ export default function ExplorePage() {
 
   const handleReset = () => {
     setOrbit(false);
+    compareAbort.current?.abort();
+    setComparison(null);
+    setCompareStatus("idle");
     markerRef.current?.remove();
     setSel(null);
     mapRef.current?.flyTo({ ...HOME, duration: 2500, essential: true });
   };
 
   const closeInspector = useCallback(() => {
+    compareAbort.current?.abort();
+    setComparison(null);
+    setCompareStatus("idle");
     setSel(null);
     markerRef.current?.remove();
   }, []);
@@ -1235,7 +1518,11 @@ export default function ExplorePage() {
             {RANGE_ORDER.map((r: RangeId) => (
               <button
                 key={r}
-                onClick={() => setRange(r)}
+                onClick={() => {
+                  setRange(r);
+                  setComparison(null);
+                  setCompareStatus("idle");
+                }}
                 title={RANGES[r].blurb}
                 className={`relative z-10 rounded-lg px-2.5 py-1 text-[10px] font-semibold uppercase transition-colors ${
                   range === r ? "text-[#02061a]" : "text-slate-400 hover:text-white"
@@ -1324,7 +1611,27 @@ export default function ExplorePage() {
         {liveMode ? <LiveLegend latest={geeLatest} /> : <Legend layer={layer} range={range} period={geePeriod} latest={geeLatest} />}
 
         <AnimatePresence>
-          {sel && <Inspector key="inspector" sel={sel} range={range} onClose={closeInspector} />}
+          {sel && (
+            <Inspector
+              key="inspector"
+              sel={sel}
+              range={range}
+              onClose={closeInspector}
+              onSelectCell={selectH3Cell}
+              compareRange={compareRange}
+              onCompareRangeChange={(nextRange) => {
+                setCompareRange(nextRange);
+                setComparison(null);
+                setCompareStatus("idle");
+              }}
+              comparison={comparison}
+              compareStatus={compareStatus}
+              onCompare={compareSelectedPeriod}
+              hotspots={hotspots}
+              hotspotStatus={hotspotStatus}
+              onSelectHotspot={selectHotspot}
+            />
+          )}
         </AnimatePresence>
 
         <AiAnalyst onFlyTo={handleAnalystFlyTo} onDiveIn={handleDive} onSwitchLayer={handleSwitchLayer} />

@@ -26,6 +26,7 @@ import {
 import { Fraunces, Instrument_Sans, JetBrains_Mono } from "next/font/google";
 import { CITIES, REGIONS, type City, type Region } from "../../lib/cities";
 import { useSatelliteCities, type SatState } from "../../lib/useSatelliteCities";
+import { ScientificNotice } from "@/components/ScientificNotice";
 
 /* ───────────────────────── Fonts ───────────────────────── */
 
@@ -1172,6 +1173,12 @@ export default function InsightsPage() {
               </Reveal>
             ))}
           </div>
+          {/* Scientific LST vs Air Temp Distinction & Reproducible Hotspot Claims */}
+          <ScientificNotice
+            city={stats.hottest.name}
+            lstValue={stats.hottest.lst}
+            ndviRange={stats.hottest.ndvi.toFixed(2)}
+          />
         </section>
 
         {/* ─────── LEADERBOARD ─────── */}
