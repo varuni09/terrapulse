@@ -3,9 +3,8 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import Link from "next/link";
 import { Fraunces, Manrope, JetBrains_Mono } from "next/font/google";
-export const dynamic = "force-dynamic";
 
-import Link from "next/link";
+// ... rest of your about page code
 
 /* ───────────────────────── Fonts ───────────────────────── */
 
