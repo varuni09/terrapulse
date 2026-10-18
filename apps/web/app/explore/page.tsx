@@ -24,10 +24,13 @@ type Sel = {
   lst: number | null;
   ndvi: number | null;
   equity: number | null;
-  air: { temp: number; humidity: number | null; time: string } | null;
+  air: { temp: number; humidity: number | null; skin: number | null; time: string } | null;
   airState: "loading" | "ok" | "error";
+  sampleRange?: RangeId;
+  samplePeriod?: Period;
+  sampleNote?: string;
   name?: string;
-  state: "loading" | "ok" | "nodata" | "error";
+  state: "loading" | "ok" | "nodata" | "water" | "error";
 };
 
 type Place = {
@@ -46,8 +49,21 @@ type EarthEngineSample = {
   latitude: number;
   longitude: number;
   data: { lst_c?: number | null; ndvi?: number | null } | null;
+  status?: "ok" | "water" | "no_data";
+  usedRange?: RangeId | null;
+  fallback?: boolean;
+  period?: Period;
   note?: string;
 };
+type LiveGrid = {
+  bounds: { west: number; east: number; south: number; north: number };
+  width: number;
+  height: number;
+  updatedAt: string;
+  points: { latitude: number; longitude: number; temperature: number | null; humidity: number | null }[];
+};
+type LiveGridWorkerResponse = { id: number; blob?: Blob; error?: string };
+type LiveGridStatus = "idle" | "loading" | "ready" | "error" | "zoom";
 
 /* ───────────────────────── constants ───────────────────────── */
 
@@ -64,11 +80,19 @@ const GLASS =
 
 const GEE_SRC = "gee-src";
 const GEE_LYR = "gee-layer";
+const LIVE_SRC = "live-weather-src";
+const LIVE_LYR = "live-weather-layer";
+const LIVE_MIN_ZOOM = 3.5;
+const LIVE_OPACITY = 0.92;
 const GEE_MAX_ZOOM = 10;
 const GEE_OPACITY = 0.85;
 const FADE_MS = 450;
 const MAX_AUTO_RETRIES = 3;
 const HOME = { center: [78.9629, 22.0] as [number, number], zoom: 4.8, pitch: 40, bearing: -15 };
+const LIVE_COLORS = ["#2c7bb6", "#4aa3ff", "#2ee6c5", "#ffd166", "#ff5a3d"];
+const LIVE_TEMP_MIN = -10;
+const LIVE_TEMP_MAX = 45;
+const BLANK_IMAGE = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
 
 /* ───────────────────────── helpers ───────────────────────── */
 
@@ -120,7 +144,7 @@ async function fetchEarthEngineSample(
 ): Promise<EarthEngineSample> {
   const res = await fetch(
     `/api/gee/sample?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&range=${range}`,
-    { signal }
+    { signal, cache: "no-store" }
   );
   if (!res.ok) throw new Error(`Earth Engine sample failed (${res.status})`);
   return res.json();
@@ -128,7 +152,7 @@ async function fetchEarthEngineSample(
 
 async function fetchAirNow(lat: number, lon: number, signal?: AbortSignal) {
   const res = await fetch(
-    `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m&timezone=auto`,
+    `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,soil_temperature_0cm&timezone=auto`,
     { signal }
   );
   if (!res.ok) throw new Error(`Air temperature failed (${res.status})`);
@@ -138,8 +162,27 @@ async function fetchAirNow(lat: number, lon: number, signal?: AbortSignal) {
   return {
     temp: c.temperature_2m as number,
     humidity: typeof c.relative_humidity_2m === "number" ? (c.relative_humidity_2m as number) : null,
+    skin: typeof c.soil_temperature_0cm === "number" ? (c.soil_temperature_0cm as number) : null,
     time: String(c.time ?? ""),
   };
+}
+
+function updateLiveImage(map: maplibregl.Map, grid: LiveGrid, url: string) {
+  const source = map.getSource(LIVE_SRC) as maplibregl.ImageSource | undefined;
+  if (!source || typeof source.updateImage !== "function") return;
+  source.updateImage({
+    url,
+    coordinates: [
+      [grid.bounds.west, grid.bounds.north],
+      [grid.bounds.east, grid.bounds.north],
+      [grid.bounds.east, grid.bounds.south],
+      [grid.bounds.west, grid.bounds.south],
+    ],
+  });
+}
+
+function updatedClock(value: string | null) {
+  return value ? new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
 }
 
 async function geocode(q: string): Promise<Place | null> {
@@ -166,7 +209,7 @@ async function geocode(q: string): Promise<Place | null> {
    Typing in the search box or loading a sample re-renders the page. These panels only
    re-render when their own props change, so the map overlays stay cheap. */
 
-const Legend = memo(function Legend({ layer, range }: { layer: Layer; range: RangeId }) {
+const Legend = memo(function Legend({ layer, range, period }: { layer: Layer; range: RangeId; period: Period | null }) {
   const R = RANGES[range];
   const [lo, hi] = legendBounds(layer, range);
   return (
@@ -190,7 +233,26 @@ const Legend = memo(function Legend({ layer, range }: { layer: Layer; range: Ran
       </div>
       <div className="mt-2 text-[10px] normal-case leading-snug text-slate-500">
         {layer === "equity" ? "Hotter and barer places score higher. " : ""}
-        {R.blurb}.
+        MODIS satellite composite · {period?.start && period.end ? `${period.start} to ${period.end}` : R.blurb} · about 10 days behind, not live.
+      </div>
+    </motion.div>
+  );
+});
+
+const LiveLegend = memo(function LiveLegend() {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
+      className={`absolute bottom-5 left-16 z-30 max-w-[calc(100%-5rem)] p-4 md:w-[24rem] ${GLASS}`}
+    >
+      <div className="mb-1 flex items-baseline justify-between gap-3 text-[10px] uppercase tracking-[0.2em] text-slate-300">
+        <span>Live 2 m air temperature</span><span className="text-[#7dd3fc]">°C</span>
+      </div>
+      <div className="h-2 rounded-full" style={{ background: `linear-gradient(to right, ${LIVE_COLORS.join(",")})` }} />
+      <div className="mt-1 flex justify-between text-[11px] tabular-nums"><span>{LIVE_TEMP_MIN}°C</span><span>{LIVE_TEMP_MAX}°C</span></div>
+      <div className="mt-2 text-[10px] normal-case leading-snug text-slate-400">
+        Live = Open-Meteo weather-model air temperature, not satellite. Satellite composites lag about 10 days.
       </div>
     </motion.div>
   );
@@ -240,16 +302,12 @@ const StatusCard = memo(function StatusCard({
                   Earth Engine · loading {LABELS[layer].toLowerCase()} ({R.short})…
                 </p>
               )}
-{gee.state === "ready" && (
-        <p className="text-slate-300">
-          MODIS satellite composite · {R.label}
-          {period && period.start && (
-            <span className="block text-slate-500">
-              {period.start} to {period.end}. Real-time satellite telemetry active.
-            </span>
-          )}
-        </p>
-      )}
+              {gee.state === "ready" && (
+                <p className="text-slate-300">
+                  MODIS satellite composite · {R.label}
+                  {period?.start && <span className="block text-slate-500">{period.start} to {period.end} · about 10 days behind, not live.</span>}
+                </p>
+              )}
               {gee.state === "error" && (
                 <>
                   <p className="text-rose-300">Earth Engine layer failed</p>
@@ -271,12 +329,13 @@ const StatusCard = memo(function StatusCard({
 });
 
 const Inspector = memo(function Inspector({ sel, range, onClose }: { sel: Sel; range: RangeId; onClose: () => void }) {
-  const R = RANGES[range];
+  const sampleRange = sel.sampleRange ?? range;
+  const R = RANGES[sampleRange];
 
   const bars: { key: Layer; label: string; text: string; pct: number }[] = [
     {
       key: "lst",
-      label: "Surface Temp",
+      label: "MODIS Surface Temp",
       text: sel.lst != null ? `${sel.lst.toFixed(1)}°C` : "—",
       pct: sel.lst != null ? (sel.lst - R.lstMin) / (R.lstMax - R.lstMin) : 0,
     },
@@ -296,8 +355,9 @@ const Inspector = memo(function Inspector({ sel, range, onClose }: { sel: Sel; r
 
   const stateLine: Record<Sel["state"], { text: string; cls: string }> = {
     loading: { text: "Reading satellite data…", cls: "text-amber-300" },
-    ok: { text: `Satellite · ${R.label}`, cls: "text-[#2ee6c5]" },
-    nodata: { text: "No data here (cloud cover or open water)", cls: "text-slate-400" },
+    ok: { text: `MODIS · ${R.label}${sel.sampleRange && sel.sampleRange !== range ? ` (fallback from ${RANGES[range].short})` : ""}`, cls: "text-[#2ee6c5]" },
+    nodata: { text: "No MODIS data in this period or longer fallback periods", cls: "text-slate-400" },
+    water: { text: "Open water · satellite land metrics unavailable", cls: "text-slate-400" },
     error: { text: "Satellite request failed", cls: "text-rose-300" },
   };
 
@@ -319,6 +379,8 @@ const Inspector = memo(function Inspector({ sel, range, onClose }: { sel: Sel; r
             {sel.lat.toFixed(4)}°, {sel.lon.toFixed(4)}°
           </div>
           <div className={`mt-1 text-[10px] ${stateLine[sel.state].cls}`}>{stateLine[sel.state].text}</div>
+          {sel.samplePeriod?.start && <div className="mt-1 text-[10px] text-slate-500">Composite window: {sel.samplePeriod.start} to {sel.samplePeriod.end}.</div>}
+          {sel.sampleNote && <div className="mt-1 text-[10px] leading-snug text-slate-400">{sel.sampleNote}</div>}
         </div>
         <button onClick={onClose} className="text-slate-500 transition-colors hover:text-white" aria-label="Close">
           ✕
@@ -345,7 +407,7 @@ const Inspector = memo(function Inspector({ sel, range, onClose }: { sel: Sel; r
       <div className="mt-5 border-t border-white/10 pt-4">
         <div className="flex items-baseline justify-between text-[10px] uppercase text-slate-400">
           <span>Air temp right now</span>
-          <span className="text-[#7dd3fc]">Live</span>
+          <span className="text-[#7dd3fc]">Live model</span>
         </div>
         <div className="mt-1 text-sm font-semibold text-white">
           {sel.airState === "loading" && <span className="text-slate-500">Loading…</span>}
@@ -359,10 +421,14 @@ const Inspector = memo(function Inspector({ sel, range, onClose }: { sel: Sel; r
             </>
           )}
         </div>
+        {sel.airState === "ok" && sel.air?.skin != null && (
+          <div className="mt-2 flex items-baseline justify-between text-[10px] text-slate-400">
+            <span>Modelled surface (skin)</span><span className="text-white">{sel.air.skin.toFixed(1)}°C</span>
+          </div>
+        )}
         <p className="mt-1 text-[10px] normal-case leading-snug text-slate-500">
-          Weather model, measured 2 m above ground
-          {sel.air?.time ? ` · ${sel.air.time.slice(11, 16)} local` : ""}. Surface temperature above is ground skin
-          temperature, so the two differ.
+          Open-Meteo weather model · air at 2 m
+          {sel.air?.time ? ` · ${sel.air.time.slice(11, 16)} local` : ""}. The MODIS surface value above is a satellite composite, about 10 days behind and not live.
         </p>
       </div>
     </motion.aside>
@@ -386,6 +452,15 @@ export default function ExplorePage() {
   const retryN = useRef(0);
   const retryTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const promoteTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const liveAbort = useRef<AbortController | null>(null);
+  const liveMoveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const liveSequence = useRef(0);
+  const liveGridRef = useRef<LiveGrid | null>(null);
+  const liveModeRef = useRef(false);
+  const liveWorker = useRef<Worker | null>(null);
+  const liveWorkerRequests = useRef(new Map<number, { resolve: (url: string) => void; reject: (error: Error) => void }>());
+  const liveWorkerSequence = useRef(0);
+  const liveImageUrl = useRef<string | null>(null);
 
   const [mapReady, setMapReady] = useState(false);
   const [layer, setLayer] = useState<Layer>("lst");
@@ -400,6 +475,9 @@ export default function ExplorePage() {
   const [open, setOpen] = useState(false);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState("");
+  const [liveMode, setLiveMode] = useState(false);
+  const [liveStatus, setLiveStatus] = useState<LiveGridStatus>("idle");
+  const [liveUpdatedAt, setLiveUpdatedAt] = useState<string | null>(null);
 
   const rangeRef = useRef<RangeId>(range);
   rangeRef.current = range;
@@ -425,7 +503,7 @@ export default function ExplorePage() {
 
       const old = activeSlot.current;
       const lid = `${GEE_LYR}-${slot}`;
-      if (m.getLayer(lid)) m.setPaintProperty(lid, "raster-opacity", GEE_OPACITY);
+      if (m.getLayer(lid)) m.setPaintProperty(lid, "raster-opacity", liveModeRef.current ? 0 : GEE_OPACITY);
 
       if (old && old !== slot) {
         const oldLid = `${GEE_LYR}-${old}`;
@@ -546,20 +624,24 @@ export default function ExplorePage() {
     const rg = rangeRef.current;
     const same = (cur: Sel | null) => !!cur && cur.lat === lat && cur.lon === lng;
 
-    setSel((cur) => (same(cur) ? { ...cur!, state: "loading", lst: null, ndvi: null, equity: null } : cur));
+    setSel((cur) => (same(cur) ? { ...cur!, state: "loading", lst: null, ndvi: null, equity: null, sampleNote: undefined } : cur));
 
     fetchEarthEngineSample(lat, lng, rg, ctrl.signal)
       .then((real) => {
         const lst = real.data?.lst_c ?? null;
         const ndvi = real.data?.ndvi ?? null;
+        const sampleRange = real.usedRange ?? rg;
         setSel((cur) =>
           same(cur)
             ? {
                 ...cur!,
                 lst,
                 ndvi,
-                equity: equityScore(lst, ndvi, rg),
-                state: lst == null && ndvi == null ? "nodata" : "ok",
+                equity: equityScore(lst, ndvi, sampleRange),
+                sampleRange,
+                samplePeriod: real.period,
+                sampleNote: real.note,
+                state: real.status === "water" ? "water" : lst == null && ndvi == null ? "nodata" : "ok",
               }
             : cur
         );
@@ -567,7 +649,7 @@ export default function ExplorePage() {
       .catch((err) => {
         if (err?.name === "AbortError") return;
         console.error("Satellite sample failed:", err);
-        setSel((cur) => (same(cur) ? { ...cur!, state: "error" } : cur));
+        setSel((cur) => (same(cur) ? { ...cur!, state: "error", sampleNote: err instanceof Error ? err.message : "Unable to read the satellite sample." } : cur));
       });
 
     fetchAirNow(lat, lng, ctrl.signal)
@@ -577,6 +659,88 @@ export default function ExplorePage() {
         setSel((cur) => (same(cur) ? { ...cur!, air: null, airState: "error" } : cur));
       });
   }, []);
+
+  const renderLiveGrid = useCallback((grid: LiveGrid) => {
+    let worker = liveWorker.current;
+    if (!worker) {
+      worker = new Worker(new URL("./live-grid.worker.ts", import.meta.url), { type: "module" });
+      worker.onmessage = (event: MessageEvent<LiveGridWorkerResponse>) => {
+        const pending = liveWorkerRequests.current.get(event.data.id);
+        if (!pending) return;
+        liveWorkerRequests.current.delete(event.data.id);
+        if (!event.data.blob) {
+          pending.reject(new Error(event.data.error ?? "Weather raster rendering failed"));
+          return;
+        }
+        pending.resolve(URL.createObjectURL(event.data.blob));
+      };
+      worker.onerror = (event) => {
+        const error = new Error(event.message || "Weather raster worker failed");
+        liveWorkerRequests.current.forEach(({ reject }) => reject(error));
+        liveWorkerRequests.current.clear();
+        worker?.terminate();
+        liveWorker.current = null;
+      };
+      liveWorker.current = worker;
+    }
+
+    const id = ++liveWorkerSequence.current;
+    return new Promise<string>((resolve, reject) => {
+      liveWorkerRequests.current.set(id, { resolve, reject });
+      worker?.postMessage({ id, grid: { width: grid.width, height: grid.height, points: grid.points } });
+    });
+  }, []);
+
+  const loadLiveGrid = useCallback(async () => {
+    const map = mapRef.current;
+    if (!map || !liveModeRef.current) return;
+    if (map.getZoom() < LIVE_MIN_ZOOM) {
+      setLiveStatus("zoom");
+      if (map.getLayer(LIVE_LYR)) map.setPaintProperty(LIVE_LYR, "raster-opacity", 0);
+      return;
+    }
+
+    liveAbort.current?.abort();
+    const controller = new AbortController();
+    liveAbort.current = controller;
+    const sequence = ++liveSequence.current;
+    const bounds = map.getBounds();
+    const query = new URLSearchParams({
+      west: String(bounds.getWest()),
+      east: String(bounds.getEast()),
+      south: String(bounds.getSouth()),
+      north: String(bounds.getNorth()),
+    });
+    setLiveStatus("loading");
+
+    try {
+      const response = await fetch(`/api/live/grid?${query}`, { cache: "no-store", signal: controller.signal });
+      const raw = await response.text();
+      let payload: LiveGrid | { error?: string } | null = null;
+      try { payload = JSON.parse(raw); } catch { /* not JSON */ }
+      if (!response.ok || !payload || !("points" in payload) || !Array.isArray(payload.points)) {
+        throw new Error(payload && "error" in payload ? payload.error ?? `HTTP ${response.status}` : `HTTP ${response.status}`);
+      }
+      const imageUrl = await renderLiveGrid(payload);
+      if (sequence !== liveSequence.current || mapRef.current !== map) {
+        URL.revokeObjectURL(imageUrl);
+        return;
+      }
+      liveGridRef.current = payload;
+      updateLiveImage(map, payload, imageUrl);
+      const previousImageUrl = liveImageUrl.current;
+      if (previousImageUrl) setTimeout(() => URL.revokeObjectURL(previousImageUrl), 10_000);
+      liveImageUrl.current = imageUrl;
+      setLiveUpdatedAt(payload.updatedAt);
+      setLiveStatus("ready");
+      if (map.getLayer(LIVE_LYR)) map.setPaintProperty(LIVE_LYR, "raster-opacity", LIVE_OPACITY);
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      console.error("Live weather grid request failed:", error);
+      setLiveStatus("error");
+      if (map.getLayer(LIVE_LYR)) map.setPaintProperty(LIVE_LYR, "raster-opacity", liveGridRef.current ? LIVE_OPACITY : 0);
+    }
+  }, [renderLiveGrid]);
 
   /* ── map setup ── */
 
@@ -610,6 +774,24 @@ export default function ExplorePage() {
       const layers = map.getStyle().layers ?? [];
       const firstSymbol = layers.find((l) => l.type === "symbol")?.id;
       beforeIdRef.current = map.getLayer("water") ? "water" : firstSymbol;
+
+      const bounds = map.getBounds();
+      map.addSource(LIVE_SRC, {
+        type: "image",
+        url: BLANK_IMAGE,
+        coordinates: [
+          [bounds.getWest(), bounds.getNorth()],
+          [bounds.getEast(), bounds.getNorth()],
+          [bounds.getEast(), bounds.getSouth()],
+          [bounds.getWest(), bounds.getSouth()],
+        ],
+      });
+      map.addLayer({
+        id: LIVE_LYR,
+        type: "raster",
+        source: LIVE_SRC,
+        paint: { "raster-opacity": 0, "raster-fade-duration": 0, "raster-resampling": "linear" },
+      }, beforeIdRef.current);
 
       // Hide the busiest label layers. Fewer symbols to collide-test per frame at a tilted
       // camera means noticeably smoother panning, and none of them matter for heat analysis.
@@ -705,6 +887,14 @@ export default function ExplorePage() {
     return () => {
       sampleAbort.current?.abort();
       reverseAbort.current?.abort();
+      liveAbort.current?.abort();
+      clearTimeout(liveMoveTimer.current);
+      liveWorker.current?.terminate();
+      liveWorker.current = null;
+      liveWorkerRequests.current.forEach(({ reject }) => reject(new Error("Map closed")));
+      liveWorkerRequests.current.clear();
+      if (liveImageUrl.current) URL.revokeObjectURL(liveImageUrl.current);
+      liveImageUrl.current = null;
       clearTimeout(retryTimer.current);
       clearTimeout(promoteTimer.current);
       markerRef.current?.remove();
@@ -720,6 +910,52 @@ export default function ExplorePage() {
     if (!mapReady) return;
     showGee(layer, range);
   }, [layer, range, mapReady, showGee]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    clearTimeout(liveMoveTimer.current);
+
+    if (!liveMode) {
+      liveAbort.current?.abort();
+      liveSequence.current += 1;
+      if (map.getLayer(LIVE_LYR)) map.setPaintProperty(LIVE_LYR, "raster-opacity", 0);
+      if (activeSlot.current) {
+        const activeLayerId = `${GEE_LYR}-${activeSlot.current}`;
+        if (map.getLayer(activeLayerId)) map.setPaintProperty(activeLayerId, "raster-opacity", GEE_OPACITY);
+      }
+      return;
+    }
+
+    for (const slot of ["a", "b"] as Slot[]) {
+      const geeLayerId = `${GEE_LYR}-${slot}`;
+      if (map.getLayer(geeLayerId)) map.setPaintProperty(geeLayerId, "raster-opacity", 0);
+    }
+    if (map.getLayer(LIVE_LYR)) {
+      map.setPaintProperty(LIVE_LYR, "raster-opacity", liveGridRef.current && map.getZoom() >= LIVE_MIN_ZOOM ? LIVE_OPACITY : 0);
+    }
+
+    const schedule = () => {
+      clearTimeout(liveMoveTimer.current);
+      liveMoveTimer.current = setTimeout(() => void loadLiveGrid(), 400);
+    };
+    const refreshIfVisible = () => {
+      if (document.visibilityState === "visible") void loadLiveGrid();
+    };
+    map.on("moveend", schedule);
+    const interval = setInterval(refreshIfVisible, 10 * 60 * 1000);
+    document.addEventListener("visibilitychange", refreshIfVisible);
+    void loadLiveGrid();
+
+    return () => {
+      clearTimeout(liveMoveTimer.current);
+      clearInterval(interval);
+      map.off("moveend", schedule);
+      document.removeEventListener("visibilitychange", refreshIfVisible);
+      liveAbort.current?.abort();
+      liveSequence.current += 1;
+    };
+  }, [liveMode, loadLiveGrid, mapReady]);
 
   // Range changed: re-sample the selected point for the new period.
   useEffect(() => {
@@ -997,6 +1233,37 @@ export default function ExplorePage() {
             ))}
           </div>
 
+          <button
+            type="button"
+            role="switch"
+            aria-checked={liveMode}
+            onClick={() => {
+              const enabled = !liveModeRef.current;
+              liveModeRef.current = enabled;
+              setLiveMode(enabled);
+            }}
+            className={`flex items-center gap-2 rounded-xl border px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider transition ${
+              liveMode ? "border-[#2ee6c5] text-[#a8fff0]" : "border-white/10 text-slate-400 hover:text-white"
+            }`}
+          >
+            Live now <span className={`h-2 w-2 rounded-full ${liveMode ? "animate-pulse bg-[#2ee6c5]" : "bg-slate-600"}`} />
+          </button>
+          {liveMode && (
+            <div className={`flex items-center gap-2 px-3 py-1.5 text-[10px] uppercase tracking-wider ${GLASS}`}>
+              <span className={`h-2 w-2 shrink-0 rounded-full ${liveStatus === "ready" || (liveStatus === "error" && liveUpdatedAt) ? "animate-pulse bg-[#2ee6c5]" : liveStatus === "loading" ? "animate-pulse bg-amber-300" : "bg-rose-400"}`} />
+              <span className="text-slate-200">
+                {liveUpdatedAt ? `LIVE · Updated ${updatedClock(liveUpdatedAt)}` : liveStatus === "zoom" ? "Zoom in for live grid" : liveStatus === "loading" ? "Loading live grid…" : liveStatus === "error" ? "Live unavailable" : "Connecting…"}
+              </span>
+              {liveStatus === "error" && (
+                <span className="flex items-center gap-1 text-amber-200">
+                  Refresh failed
+                  <button type="button" onClick={() => void loadLiveGrid()} className="rounded bg-white/10 px-2 py-1 text-white hover:bg-white/20">Retry</button>
+                </span>
+              )}
+              <button type="button" onClick={() => void loadLiveGrid()} disabled={liveStatus === "loading"} aria-label="Refresh live weather grid" title="Refresh live weather grid" className="rounded px-1.5 text-sm text-slate-300 hover:text-white disabled:opacity-40">↻</button>
+            </div>
+          )}
+
           <div className="flex gap-1 rounded-xl bg-black/40 p-1">
             {[
               ["cinematic", "🎬 3D Angle"],
@@ -1034,7 +1301,7 @@ export default function ExplorePage() {
 
         <StatusCard gee={gee} layer={layer} range={range} period={geePeriod} onRetry={handleRetryLayer} />
 
-        <Legend layer={layer} range={range} />
+        {liveMode ? <LiveLegend /> : <Legend layer={layer} range={range} period={geePeriod} />}
 
         <AnimatePresence>
           {sel && <Inspector key="inspector" sel={sel} range={range} onClose={closeInspector} />}

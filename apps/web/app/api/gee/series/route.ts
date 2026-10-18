@@ -1,6 +1,6 @@
 // Monthly satellite time series for one point (MODIS LST + NDVI) via Earth Engine.
 // Uses the same env vars as your other GEE routes: GEE_PROJECT and GEE_SERVICE_ACCOUNT_JSON.
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, connection } from "next/server";
 // @ts-ignore  (the Earth Engine node client ships no types)
 import ee from "@google/earthengine";
 
@@ -30,6 +30,7 @@ const cache = new Map<string, { t: number; body: any }>();
 const TTL = 6 * 3600 * 1000;
 
 export async function GET(req: NextRequest) {
+  await connection();
   const p = req.nextUrl.searchParams;
   const lat = Number(p.get("lat")), lon = Number(p.get("lon"));
   const months = Math.min(36, Math.max(6, Math.round(Number(p.get("months") ?? 24)) || 24));

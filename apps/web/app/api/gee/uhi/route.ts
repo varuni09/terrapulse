@@ -1,5 +1,5 @@
 // Surface urban heat island for a city: mean daytime LST of MODIS "urban" pixels vs rural pixels within 30 km.
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, connection } from "next/server";
 import { ee, initEE } from "../../../../lib/eeServer";
 
 export const maxDuration = 30;
@@ -9,6 +9,7 @@ const TTL = 6 * 3600 * 1000;
 const HDR = { "Cache-Control": "public, s-maxage=21600, stale-while-revalidate=86400" };
 
 export async function GET(req: NextRequest) {
+  await connection();
   const p = req.nextUrl.searchParams;
   const lat = Number(p.get("lat")), lon = Number(p.get("lon"));
   if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180)
