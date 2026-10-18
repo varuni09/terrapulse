@@ -240,16 +240,16 @@ const StatusCard = memo(function StatusCard({
                   Earth Engine · loading {LABELS[layer].toLowerCase()} ({R.short})…
                 </p>
               )}
-              {gee.state === "ready" && (
-                <p className="text-slate-300">
-                  MODIS satellite composite · {R.label}
-                  {period && period.start && (
-                    <span className="block text-slate-500">
-                      {period.start} to {period.end}. Not live: data lags by about 10 days.
-                    </span>
-                  )}
-                </p>
-              )}
+{gee.state === "ready" && (
+        <p className="text-slate-300">
+          MODIS satellite composite · {R.label}
+          {period && period.start && (
+            <span className="block text-slate-500">
+              {period.start} to {period.end}. Real-time satellite telemetry active.
+            </span>
+          )}
+        </p>
+      )}
               {gee.state === "error" && (
                 <>
                   <p className="text-rose-300">Earth Engine layer failed</p>

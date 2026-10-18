@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextResponse , connection} from "next/server";
 import { CITIES, type City } from "../../../../lib/cities";
 
 /**
@@ -13,7 +13,6 @@ import { CITIES, type City } from "../../../../lib/cities";
  *
  * NDVI and heat-island values are reference figures from lib/cities.ts (not live).
  */
-export const dynamic = "force-dynamic";
 export const maxDuration = 20;
 
 type OpenMeteoLocation = {
@@ -25,6 +24,7 @@ const round1 = (n: number) => Math.round(n * 10) / 10;
 const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 
 export async function GET() {
+    await connection();
   const lat = CITIES.map((c) => c.lat.toFixed(2)).join(",");
   const lon = CITIES.map((c) => c.lon.toFixed(2)).join(",");
   const url =

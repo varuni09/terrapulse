@@ -1,10 +1,10 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, connection } from "next/server";
 import { initializeEarthEngine } from "@/lib/gee";
 import { imageFor, period, visFor } from "@/lib/gee-images";
 import { isRange, type LayerId, type RangeId } from "@/lib/gee-config";
 
-// Map ids are cached for a few hours and shared by every visitor. Without this, every call asks
-// Earth Engine for a brand-new map, which discards its tile cache and re-computes every tile.
+// Map ids are cached for a few hours and shared by every visitor, one per layer + time range.
+// Without this, every call asks Earth Engine for a brand-new map and re-computes every tile.
 const TTL_MS = 3 * 60 * 60 * 1000;
 const g = globalThis as unknown as { __geeTileCache?: Map<string, { promise: Promise<string>; exp: number }> };
 const cache = (g.__geeTileCache ??= new Map()); // survives hot reloads in dev
@@ -34,11 +34,14 @@ function getTileUrl(layer: LayerId, range: RangeId): Promise<string> {
 }
 
 export async function GET(request: NextRequest) {
-  const searchParams = new URL(request.url).searchParams;
-  const layerParam = searchParams.get("layer") ?? "lst";
-  const rangeParam = searchParams.get("range") ?? "30d";
+  // Opt in to request-time rendering. With cacheComponents, a GET handler that never reads the request
+  // would otherwise be prerendered at build time and its result frozen.
+  await connection();
+  const sp = new URL(request.url).searchParams;
+  const layer = sp.get("layer") ?? "lst";
+  const rangeParam = sp.get("range") ?? "30d";
 
-  if (layerParam !== "lst" && layerParam !== "ndvi" && layerParam !== "equity") {
+  if (layer !== "lst" && layer !== "ndvi" && layer !== "equity") {
     return NextResponse.json({ error: "layer must be lst, ndvi or equity" }, { status: 400 });
   }
   if (!isRange(rangeParam)) {
@@ -46,16 +49,14 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const layer: LayerId = layerParam;
-    const range: RangeId = rangeParam;
-    const tileUrl = await getTileUrl(layer, range);
+    const tileUrl = await getTileUrl(layer, rangeParam);
     return NextResponse.json(
       {
         layer,
-        range,
+        range: rangeParam,
         tileUrl,
         units: layer === "ndvi" ? "NDVI" : layer === "equity" ? "risk 0-100" : "°C",
-        period: period(range),
+        period: period(rangeParam),
       },
       { headers: { "Cache-Control": "private, max-age=600" } }
     );

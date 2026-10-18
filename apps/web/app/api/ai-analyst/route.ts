@@ -7,8 +7,6 @@ import { NextRequest, NextResponse } from "next/server";
  * Uses OPENAI_API_KEY if set, otherwise ANTHROPIC_API_KEY.
  * Optional: OPENAI_MODEL (default gpt-4o-mini), ANTHROPIC_MODEL (default claude-sonnet-5-5).
  */
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
 export const maxDuration = 30;
 
 const SYSTEM = `You are the TERRAPULSE urban-heat analyst.

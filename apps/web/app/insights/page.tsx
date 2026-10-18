@@ -25,6 +25,7 @@ import {
 } from "framer-motion";
 import { Fraunces, Instrument_Sans, JetBrains_Mono } from "next/font/google";
 import { CITIES, REGIONS, type City, type Region } from "../../lib/cities";
+import { useSatelliteCities, type SatState } from "../../lib/useSatelliteCities";
 
 /* ───────────────────────── Fonts ───────────────────────── */
 
@@ -661,19 +662,29 @@ function Scatter({ cities, stats, selected, onSelect }: { cities: City[]; stats:
 
 const r1 = (n: number) => Math.round(n * 10) / 10;
 
-function buildAnalystContext(cities: City[], stats: Stats, regions: RegionStat[], live: LiveState) {
+function buildAnalystContext(cities: City[], stats: Stats, regionStats: RegionStat[], live: LiveState, sat: SatState) {
   const top = (key: (c: City) => number, dir: 1 | -1, n = 5) =>
     [...cities].sort((a, b) => (key(a) - key(b)) * dir).slice(0, n).map((c) => ({
-      city: c.name, country: c.country, region: c.region, peakSurfaceTempC: r1(c.lst), ndvi: Math.round(c.ndvi * 100) / 100, heatIslandC: r1(c.uhi),
+      city: c.name,
+      country: c.country,
+      region: c.region,
+      peakSurfaceTempC: r1(c.lst),
+      ndvi: Math.round(c.ndvi * 100) / 100,
+      heatIslandC: r1(c.uhi),
     }));
+
   return {
     provenance: {
       isLive: live.ok,
       surfaceTemperature: live.ok
         ? `Live modelled surface temperature (${live.source ?? "weather model"}), today's peak per city, updated ${live.updatedAt}`
         : "Illustrative sample values — the live feed was unavailable",
-      ndvi: "Reference values (not live)",
-      heatIsland: "Reference urban-minus-rural estimates (not live)",
+      ndvi: sat.ok
+        ? `Satellite-measured (NASA MODIS, ${sat.period?.start} to ${sat.period?.end}), mean within 5 km of each city centre`
+        : "Reference values (not live)",
+      heatIsland: sat.ok
+        ? "Satellite surface heat island: urban-core mean daytime surface temp minus a 15-30 km rural ring (water and built-up land excluded), 12-month mean"
+        : "Reference urban-minus-rural estimates (not live)",
     },
     cityCount: stats.n,
     meanPeakSurfaceTempC: r1(stats.meanLst),
@@ -683,7 +694,14 @@ function buildAnalystContext(cities: City[], stats: Stats, regions: RegionStat[]
     coolest: top((c) => c.lst, 1),
     strongestHeatIslands: top((c) => c.uhi, -1),
     leastVegetated: top((c) => c.ndvi, 1),
-    regions: regions.map((r) => ({ region: r.region, cities: r.list.length, meanPeakSurfaceTempC: r1(r.lst), meanNdvi: Math.round(r.ndvi * 100) / 100, meanHeatIslandC: r1(r.uhi), hottestCity: r.list[0].name })),
+    regions: regionStats.map((r) => ({
+      region: r.region,
+      cities: r.list.length,
+      meanPeakSurfaceTempC: r1(r.lst),
+      meanNdvi: Math.round(r.ndvi * 100) / 100,
+      meanHeatIslandC: r1(r.uhi),
+      hottestCity: r.list[0].name,
+    })),
     correlationNdviVsPeakTemp: Math.round(stats.r * 100) / 100,
     estimatedTempChangePerPlus0_1Ndvi: r1(-stats.slope * 0.1),
   };
@@ -721,7 +739,7 @@ function RichText({ text }: { text: string }) {
   );
 }
 
-function AIAnalyst({ context, live }: { context: ReturnType<typeof buildAnalystContext>; live: LiveState }) {
+function AIAnalyst({ context, live, sat }: { context: ReturnType<typeof buildAnalystContext>; live: LiveState; sat: SatState }) {
   const [question, setQuestion] = useState("What are the most important heat-risk findings, and what should a city do first?");
   const [answer, setAnswer] = useState("");
   const [busy, setBusy] = useState(false);
@@ -765,7 +783,7 @@ function AIAnalyst({ context, live }: { context: ReturnType<typeof buildAnalystC
           <h2 className="wx-serif mt-3 text-[clamp(2rem,4.8vw,3.8rem)] leading-tight text-white">Ask the AI analyst<span className="wx-accent">.</span></h2>
           <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-400">Turn the heat and vegetation indicators on this page into a concise, evidence-aware briefing with priorities and practical next steps.</p>
         </div>
-        <span className="wx-ai-status"><span className="wx-dot" /> {live.ok ? "ANALYSING LIVE DATA" : "ANALYSING SAMPLE DATA"}</span>
+        <span className="wx-ai-status"><span className="wx-dot" /> {live.ok ? (sat.ok ? "ANALYSING LIVE + SATELLITE DATA" : "ANALYSING LIVE DATA") : "ANALYSING SAMPLE DATA"}</span>
       </div>
       <div className="mt-8 grid gap-5 lg:grid-cols-[1fr_auto]">
         <label className="block">
@@ -790,9 +808,11 @@ function AIAnalyst({ context, live }: { context: ReturnType<typeof buildAnalystC
           <div className="wx-eyebrow">Analyst briefing</div>
           <div className="mt-4 text-sm leading-7 text-slate-200"><RichText text={answer} /></div>
           <p className="mt-5 border-t border-white/10 pt-4 text-[11px] leading-5 text-slate-500">
-            {live.ok
-              ? "Surface temperatures are live modelled values (today's peak); NDVI and heat-island figures are reference values. Treat recommendations as planning guidance, not a substitute for local assessment."
-              : "These figures are illustrative samples, not verified current measurements. Treat recommendations as general guidance."}
+            {sat.ok
+              ? "Satellite NDVI and heat-island values are included in the briefing as remote-sensing context, alongside the live temperature feed. Treat recommendations as planning guidance, not a substitute for local assessment."
+              : live.ok
+                ? "Surface temperatures are live modelled values (today's peak); NDVI and heat-island figures are reference values. Treat recommendations as planning guidance, not a substitute for local assessment."
+                : "These figures are illustrative samples, not verified current measurements. Treat recommendations as general guidance."}
           </p>
         </motion.div>
       )}
@@ -958,7 +978,8 @@ export default function InsightsPage() {
   const [sel, setSel] = useState<number | null>(null);
   const onSelect = useCallback((i: number) => setSel(i), []);
 
-  const [cities, setCities] = useState<City[]>(CITIES);
+  const [baseCities, setCities] = useState<City[]>(CITIES);
+  const { cities, sat } = useSatelliteCities(baseCities);
   const [live, setLive] = useState<LiveState>({ ok: false, loading: true, updatedAt: null, source: null, liveCount: 0, error: null });
 
   const load = useCallback(async () => {
@@ -996,7 +1017,7 @@ export default function InsightsPage() {
 
   const stats = useMemo(() => computeStats(cities), [cities]);
   const regionStats = useMemo(() => computeRegionStats(cities), [cities]);
-  const analystContext = useMemo(() => buildAnalystContext(cities, stats, regionStats, live), [cities, stats, regionStats, live]);
+  const analystContext = useMemo(() => buildAnalystContext(cities, stats, regionStats, live, sat), [cities, stats, regionStats, live, sat]);
 
   const hero = useRef<HTMLElement>(null);
   const { scrollYProgress } = useScroll({ target: hero, offset: ["start start", "end start"] });
@@ -1022,9 +1043,19 @@ export default function InsightsPage() {
     `${stats.n} cities · 6 regions`,
   ];
 
+  const satNote = sat.ok
+    ? `Satellite layer active · ${sat.count}/${stats.n} cities with NDVI and surface heat-island values from ${sat.period?.start ?? "the latest"} to ${sat.period?.end ?? "present"}.`
+    : sat.loading
+      ? "Satellite layer loading…"
+      : "Satellite layer unavailable · showing reference vegetation and heat-island values.";
+
   const dataNote = live.ok
-    ? `Surface temperature is live — today's peak from the ${live.source ?? "weather model"}, refreshed every 5 minutes (${live.liveCount}/${stats.n} cities). NDVI and heat-island values are reference figures until Earth Engine is connected.`
-    : "Showing illustrative sample values — the live feed couldn't be reached. It retries automatically.";
+    ? sat.ok
+      ? `Surface temperature is live — today's peak from the ${live.source ?? "weather model"}, refreshed every 5 minutes (${live.liveCount}/${stats.n} cities). NDVI and heat-island values are satellite-derived and reflect the ${sat.period ? `${sat.period.start} to ${sat.period.end}` : "latest available"} window.`
+      : `Surface temperature is live — today's peak from the ${live.source ?? "weather model"}, refreshed every 5 minutes (${live.liveCount}/${stats.n} cities). NDVI and heat-island values are reference figures until the satellite feed is available.`
+    : sat.ok
+      ? `Showing satellite-informed vegetation and heat-island values from ${sat.period ? `${sat.period.start} to ${sat.period.end}` : "the latest available"} window, while the live temperature feed is currently unavailable.`
+      : "Showing illustrative sample values — the live feed and satellite feed couldn't be reached. It retries automatically.";
 
   return (
     <main className={`wx-root ${display.variable} ${sans.variable} ${mono.variable}`}>
@@ -1049,6 +1080,7 @@ export default function InsightsPage() {
               {live.ok && <span className="wx-dot" />}
               {live.ok ? `Live · updated ${fmtTime(live.updatedAt)}` : live.loading ? "Connecting to live feed…" : "Sample data · live feed unavailable"}
             </span>
+            {sat.ok ? <span className="wx-badge"><span className="wx-dot" />Satellite · {sat.count}/{stats.n} cities</span> : sat.loading ? <span className="wx-badge">Satellite layer loading…</span> : <span className="wx-badge amber">Satellite layer offline</span>}
             <button type="button" onClick={load} disabled={live.loading} className="wx-badge wx-refresh" aria-label="Refresh live data">
               <span className={live.loading ? "wx-ai-spinner" : ""}>{live.loading ? "" : "↻"}</span> Refresh
             </button>
@@ -1183,7 +1215,7 @@ export default function InsightsPage() {
       </div>
 
       <div className="relative z-10 mx-auto max-w-7xl px-6 md:px-10">
-        <AIAnalyst context={analystContext} live={live} />
+        <AIAnalyst context={analystContext} live={live} sat={sat} />
       </div>
 
       {/* ─────── PINNED REGION SCROLLER ─────── */}
@@ -1211,6 +1243,7 @@ export default function InsightsPage() {
           </div>
         </Reveal>
         <p className="mt-10 text-center text-[11px] leading-relaxed text-slate-600">{dataNote}</p>
+        <p className="mt-2 text-center text-[10px] leading-relaxed text-slate-500">{satNote}</p>
       </div>
 
       <CityDock cities={cities} stats={stats} index={sel} onClose={() => setSel(null)} />
