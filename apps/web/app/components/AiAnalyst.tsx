@@ -5,9 +5,11 @@ import { HELP, SRC_POINT, SRC_TREND, SRC_UHI, composeCompare, composePoint, comp
 
 type Message = { id: string; sender: "user" | "ai"; text: string; source?: string; actionLabel?: string; onAction?: () => void };
 type Place = { name: string; label: string; lat: number; lon: number };
+type AnalystLayer = "lst" | "ndvi" | "equity";
 interface Props {
   onFlyTo?: (lat: number, lon: number, name: string) => void;
-  onSwitchLayer?: (layer: "lst" | "ndvi") => void;
+  onDiveIn?: () => void;
+  onSwitchLayer?: (layer: AnalystLayer) => void;
 }
 
 async function geocode(q: string): Promise<Place | null> {
@@ -28,7 +30,7 @@ const sample = async (p: Place) => {
 
 const PRESETS = ["How hot is Phoenix?", "Compare Delhi and London", "Heat island of Cairo", "Is Lagos getting greener?"];
 
-export default function AiAnalyst({ onFlyTo, onSwitchLayer }: Props) {
+export default function AiAnalyst({ onFlyTo, onDiveIn, onSwitchLayer }: Props) {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([
     { id: "0", sender: "ai", text: "I'm the TerraPulse analyst. I look up real satellite data for a place and tell you what it says, including when there isn't any. " + HELP },
@@ -124,7 +126,13 @@ export default function AiAnalyst({ onFlyTo, onSwitchLayer }: Props) {
         )}
       </AnimatePresence>
       {!isOpen && (
-        <button onClick={() => setIsOpen(true)} className="flex items-center gap-2 rounded-2xl border border-[#2ee6c5]/40 bg-[#04091f]/90 px-4 py-3 text-xs font-bold text-white shadow-2xl backdrop-blur-xl transition hover:scale-105 hover:border-[#2ee6c5]">
+        <button
+          onClick={() => {
+            setIsOpen(true);
+            onDiveIn?.();
+          }}
+          className="flex items-center gap-2 rounded-2xl border border-[#2ee6c5]/40 bg-[#04091f]/90 px-4 py-3 text-xs font-bold text-white shadow-2xl backdrop-blur-xl transition hover:scale-105 hover:border-[#2ee6c5]"
+        >
           <div className="h-2.5 w-2.5 animate-pulse rounded-full bg-[#2ee6c5]" /><span>Ask the satellite analyst</span>
         </button>
       )}

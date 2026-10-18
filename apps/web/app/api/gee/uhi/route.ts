@@ -2,8 +2,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ee, initEE } from "../../../../lib/eeServer";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
 export const maxDuration = 30;
 
 const cache = new Map<string, { t: number; body: any }>();

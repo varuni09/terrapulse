@@ -1,5 +1,5 @@
 import React from "react";
-import AiAnalyst from "../../insights/AiAnalyst";
+import AiAnalyst from "../../components/AiAnalyst";
 import AnalyticsPanel from "../../components/AnalyticsPanel";
 
 export default function InsightsPage() {
