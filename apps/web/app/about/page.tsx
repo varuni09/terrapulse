@@ -863,9 +863,14 @@ function CopyEmail() {
 /* ───────────────────────── Page ───────────────────────── */
 
 export default function AboutPage() {
+  const [currentYear, setCurrentYear] = useState(2026);
   const progress = useRef<HTMLDivElement>(null);
   const root = useRef<HTMLElement>(null);
   const glow = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setCurrentYear(new Date().getFullYear());
+  }, []);
 
   useEffect(() => {
     let raf = 0;
@@ -1170,7 +1175,7 @@ export default function AboutPage() {
       {/* ───────── Footer ───────── */}
       <footer className="relative border-t border-white/[0.06] px-6 py-10 md:px-12">
         <div className="mx-auto flex max-w-6xl flex-col items-start justify-between gap-4 text-[13px] text-slate-500 sm:flex-row sm:items-center">
-          <p>© {new Date().getFullYear()} TerraPulse · {AUTHOR.name}</p>
+          <p>© {currentYear} TerraPulse · {AUTHOR.name}</p>
           <p className="flex flex-wrap gap-x-6 gap-y-2">
             <a href={AUTHOR.github} target="_blank" rel="noopener noreferrer" className="transition hover:text-[#5ff0d6]">GitHub</a>
             <a href={AUTHOR.linkedin} target="_blank" rel="noopener noreferrer" className="transition hover:text-[#5ff0d6]">LinkedIn</a>
