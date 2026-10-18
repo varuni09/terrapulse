@@ -24,6 +24,7 @@ import {
   useTransform,
 } from "framer-motion";
 import { Fraunces, Instrument_Sans, JetBrains_Mono } from "next/font/google";
+import { CITIES, REGIONS, type City, type Region } from "../../lib/cities";
 
 /* ───────────────────────── Fonts ───────────────────────── */
 
@@ -31,62 +32,7 @@ const display = Fraunces({ subsets: ["latin"], style: ["normal", "italic"], axes
 const sans = Instrument_Sans({ subsets: ["latin"], variable: "--f-sans" });
 const mono = JetBrains_Mono({ subsets: ["latin"], variable: "--f-mono" });
 
-/* ───────────────────────── Data ─────────────────────────
- * ILLUSTRATIVE SAMPLE. These are rounded, representative figures for a typical hot-season
- * daytime composite, NOT measurements pulled from your pipeline (Chennai uses your own
- * 38.12 °C / 0.342 NDVI means). Swap this array for real values from Earth Engine
- * (same shape) and every chart, rank and statistic on the page updates itself.
- * lst = mean land-surface temp °C · ndvi = mean vegetation index · uhi = urban minus rural °C
- */
-
-type Region = "Asia" | "Europe" | "Africa" | "North America" | "South America" | "Oceania";
-type City = { name: string; country: string; region: Region; lat: number; lon: number; lst: number; ndvi: number; uhi: number };
-const c = (name: string, country: string, region: Region, lat: number, lon: number, lst: number, ndvi: number, uhi: number): City => ({
-  name, country, region, lat, lon, lst, ndvi, uhi,
-});
-
-const CITIES: City[] = [
-  c("Chennai", "India", "Asia", 13.08, 80.27, 38.12, 0.342, 3.9),
-  c("Delhi", "India", "Asia", 28.61, 77.21, 44.5, 0.18, 5.2),
-  c("Mumbai", "India", "Asia", 19.08, 72.88, 39.5, 0.27, 3.6),
-  c("Kolkata", "India", "Asia", 22.57, 88.36, 40.2, 0.25, 4.1),
-  c("Karachi", "Pakistan", "Asia", 24.86, 67.0, 43.6, 0.1, 4.4),
-  c("Riyadh", "Saudi Arabia", "Asia", 24.71, 46.68, 47.8, 0.07, 3.1),
-  c("Dubai", "UAE", "Asia", 25.2, 55.27, 48.9, 0.05, 2.8),
-  c("Baghdad", "Iraq", "Asia", 33.31, 44.37, 47.2, 0.08, 4.8),
-  c("Bangkok", "Thailand", "Asia", 13.76, 100.5, 40.1, 0.22, 4.3),
-  c("Jakarta", "Indonesia", "Asia", -6.2, 106.85, 39.0, 0.24, 4.0),
-  c("Singapore", "Singapore", "Asia", 1.35, 103.82, 36.0, 0.35, 3.2),
-  c("Beijing", "China", "Asia", 39.9, 116.4, 39.2, 0.27, 4.6),
-  c("Shanghai", "China", "Asia", 31.23, 121.47, 39.8, 0.25, 4.9),
-  c("Seoul", "South Korea", "Asia", 37.57, 126.98, 35.8, 0.33, 4.2),
-  c("Tokyo", "Japan", "Asia", 35.68, 139.69, 36.5, 0.3, 4.5),
-  c("Istanbul", "Türkiye", "Europe", 41.01, 28.98, 37.5, 0.26, 3.7),
-  c("Madrid", "Spain", "Europe", 40.42, -3.7, 40.0, 0.18, 3.9),
-  c("Rome", "Italy", "Europe", 41.9, 12.5, 38.0, 0.25, 3.5),
-  c("Paris", "France", "Europe", 48.86, 2.35, 32.5, 0.33, 3.8),
-  c("London", "United Kingdom", "Europe", 51.51, -0.13, 30.0, 0.39, 3.0),
-  c("Moscow", "Russia", "Europe", 55.76, 37.62, 31.0, 0.45, 3.3),
-  c("Cairo", "Egypt", "Africa", 30.04, 31.24, 45.2, 0.09, 4.0),
-  c("Lagos", "Nigeria", "Africa", 6.52, 3.38, 37.2, 0.31, 3.4),
-  c("Nairobi", "Kenya", "Africa", -1.29, 36.82, 31.5, 0.38, 2.4),
-  c("Johannesburg", "South Africa", "Africa", -26.2, 28.05, 34.0, 0.28, 3.1),
-  c("New York", "United States", "North America", 40.71, -74.01, 36.5, 0.3, 4.4),
-  c("Los Angeles", "United States", "North America", 34.05, -118.24, 41.0, 0.15, 4.0),
-  c("Phoenix", "United States", "North America", 33.45, -112.07, 46.9, 0.11, 4.6),
-  c("Houston", "United States", "North America", 29.76, -95.37, 40.5, 0.28, 4.2),
-  c("Toronto", "Canada", "North America", 43.65, -79.38, 33.0, 0.38, 3.6),
-  c("Mexico City", "Mexico", "North America", 19.43, -99.13, 37.0, 0.23, 3.3),
-  c("Bogotá", "Colombia", "South America", 4.71, -74.07, 29.0, 0.4, 2.2),
-  c("Lima", "Peru", "South America", -12.05, -77.04, 30.5, 0.12, 2.9),
-  c("São Paulo", "Brazil", "South America", -23.55, -46.63, 35.5, 0.33, 3.9),
-  c("Rio de Janeiro", "Brazil", "South America", -22.91, -43.17, 37.5, 0.31, 3.5),
-  c("Buenos Aires", "Argentina", "South America", -34.6, -58.38, 36.0, 0.27, 3.4),
-  c("Sydney", "Australia", "Oceania", -33.87, 151.21, 36.5, 0.34, 3.6),
-  c("Melbourne", "Australia", "Oceania", -37.81, 144.96, 38.5, 0.25, 3.8),
-];
-
-const REGIONS: Region[] = ["Asia", "Europe", "Africa", "North America", "South America", "Oceania"];
+/* ───────────────────────── Stats ───────────────────────── */
 
 const avg = (a: number[]) => a.reduce((s, x) => s + x, 0) / Math.max(1, a.length);
 function pearson(xs: number[], ys: number[]) {
@@ -97,7 +43,8 @@ function pearson(xs: number[], ys: number[]) {
     sxx += (x - mx) ** 2;
     syy += (ys[i] - my) ** 2;
   });
-  return sxy / Math.sqrt(sxx * syy);
+  const r = sxy / Math.sqrt(sxx * syy);
+  return Number.isFinite(r) ? r : 0;
 }
 function regress(xs: number[], ys: number[]) {
   const mx = avg(xs), my = avg(ys);
@@ -106,40 +53,59 @@ function regress(xs: number[], ys: number[]) {
     sxy += (x - mx) * (ys[i] - my);
     sxx += (x - mx) ** 2;
   });
-  const slope = sxy / sxx;
+  const slope = sxx ? sxy / sxx : 0;
   return { slope, intercept: my - slope * mx };
 }
 
-const STATS = (() => {
-  const lst = CITIES.map((x) => x.lst), ndvi = CITIES.map((x) => x.ndvi), uhi = CITIES.map((x) => x.uhi);
-  const hottest = CITIES.reduce((a, b) => (b.lst > a.lst ? b : a));
-  const coolest = CITIES.reduce((a, b) => (b.lst < a.lst ? b : a));
+function computeStats(cities: City[]) {
+  const lst = cities.map((x) => x.lst), ndvi = cities.map((x) => x.ndvi), uhi = cities.map((x) => x.uhi);
+  const hottest = cities.reduce((a, b) => (b.lst > a.lst ? b : a), cities[0]);
+  const coolest = cities.reduce((a, b) => (b.lst < a.lst ? b : a), cities[0]);
+  const lo = Math.floor((Math.min(...lst) - 2) / 4) * 4;
+  const hi = Math.max(lo + 12, Math.ceil((Math.max(...lst) + 2) / 4) * 4);
   return {
-    n: CITIES.length,
+    n: cities.length,
     meanLst: avg(lst),
     meanNdvi: avg(ndvi),
     meanUhi: avg(uhi),
+    uhiMax: Math.max(...uhi),
     hottest,
     coolest,
     r: pearson(ndvi, lst),
     ...regress(ndvi, lst),
+    axis: { lo, hi },
   };
-})();
+}
+type Stats = ReturnType<typeof computeStats>;
 
-const REGION_STATS = REGIONS.map((region) => {
-  const list = CITIES.filter((x) => x.region === region);
-  return {
-    region,
-    list: [...list].sort((a, b) => b.lst - a.lst),
-    lst: avg(list.map((x) => x.lst)),
-    ndvi: avg(list.map((x) => x.ndvi)),
-    uhi: avg(list.map((x) => x.uhi)),
-  };
-});
+function computeRegionStats(cities: City[]) {
+  return REGIONS.map((region) => {
+    const list = cities.filter((x) => x.region === region);
+    return {
+      region,
+      list: [...list].sort((a, b) => b.lst - a.lst),
+      lst: avg(list.map((x) => x.lst)),
+      ndvi: avg(list.map((x) => x.ndvi)),
+      uhi: avg(list.map((x) => x.uhi)),
+    };
+  }).filter((r) => r.list.length > 0);
+}
+type RegionStat = ReturnType<typeof computeRegionStats>[number];
+
+type LiveState = {
+  ok: boolean;
+  loading: boolean;
+  updatedAt: string | null;
+  source: string | null;
+  liveCount: number;
+  error: string | null;
+};
+
+const fmtTime = (iso: string | null) => (iso ? new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "");
 
 /* ───────────────────────── Colour helpers ───────────────────────── */
 
-const TEMP_STOPS: [number, string][] = [[28, "#4aa3ff"], [33, "#2ee6c5"], [38, "#ffd166"], [43, "#ff8a3d"], [49, "#ff3b30"]];
+const TEMP_STOPS: [number, string][] = [[5, "#3b6cff"], [18, "#4aa3ff"], [28, "#2ee6c5"], [36, "#ffd166"], [44, "#ff8a3d"], [52, "#ff3b30"]];
 const NDVI_STOPS: [number, string][] = [[0, "#c58a3b"], [0.15, "#dfc27d"], [0.3, "#7fc97f"], [0.45, "#1fb36b"]];
 const hex = (h: string) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
 function ramp(stops: [number, string][], v: number) {
@@ -198,13 +164,22 @@ function SplitHeading({
   );
 }
 
+/** Counts up on first view, then glides from the previous value whenever live data changes. */
 function CountUp({ value, decimals = 0, suffix = "", duration = 1.8 }: { value: number; decimals?: number; suffix?: string; duration?: number }) {
   const ref = useRef<HTMLSpanElement>(null);
   const inView = useInView(ref, { once: true, margin: "-10%" });
+  const cur = useRef(0);
   const [txt, setTxt] = useState((0).toFixed(decimals));
   useEffect(() => {
     if (!inView) return;
-    const ctl = animate(0, value, { duration, ease: [0.16, 1, 0.3, 1], onUpdate: (v) => setTxt(v.toFixed(decimals)) });
+    const ctl = animate(cur.current, value, {
+      duration: cur.current === 0 ? duration : 0.9,
+      ease: [0.16, 1, 0.3, 1],
+      onUpdate: (v) => {
+        cur.current = v;
+        setTxt(v.toFixed(decimals));
+      },
+    });
     return () => ctl.stop();
   }, [inView, value, decimals, duration]);
   return <span ref={ref}>{txt}{suffix}</span>;
@@ -253,6 +228,8 @@ const LAND_URLS = [
 
 function Globe({ cities, selected, onSelect, reduced }: { cities: City[]; selected: number | null; onSelect: (i: number) => void; reduced: boolean }) {
   const canvas = useRef<HTMLCanvasElement>(null);
+  const citiesRef = useRef<City[]>(cities);
+  citiesRef.current = cities;
   const rot = useRef({ lon: 70 * D, lat: 22 * D });
   const target = useRef<{ lon: number; lat: number } | null>(null);
   const drag = useRef({ active: false, moved: false, x: 0, y: 0, last: 0 });
@@ -261,14 +238,13 @@ function Globe({ cities, selected, onSelect, reduced }: { cities: City[]; select
   const hoverRef = useRef(-1);
   const selRef = useRef<number | null>(null);
   const [hover, setHover] = useState<{ i: number; x: number; y: number } | null>(null);
-  const hot = useMemo(() => [...CITIES.keys()].sort((a, b) => CITIES[b].lst - CITIES[a].lst).slice(0, 6), []);
+  const hot = useMemo(() => [...cities.keys()].sort((a, b) => cities[b].lst - cities[a].lst).slice(0, 6), [cities]);
 
   useEffect(() => {
     selRef.current = selected;
-    if (selected != null) {
-      const ct = CITIES[selected];
-      target.current = { lon: ct.lon * D, lat: Math.max(-0.9, Math.min(0.9, ct.lat * D * 0.8)) };
-    } else target.current = null;
+    const ct = selected != null ? citiesRef.current[selected] : null;
+    if (ct) target.current = { lon: ct.lon * D, lat: Math.max(-0.9, Math.min(0.9, ct.lat * D * 0.8)) };
+    else target.current = null;
   }, [selected]);
 
   useEffect(() => {
@@ -342,7 +318,6 @@ function Globe({ cities, selected, onSelect, reduced }: { cities: City[]; select
         ctx.stroke();
       };
 
-      // atmosphere
       const atm = ctx.createRadialGradient(cx, cy, R * 0.92, cx, cy, R * 1.38);
       atm.addColorStop(0, "rgba(255,138,61,0.22)");
       atm.addColorStop(0.45, "rgba(255,90,60,0.07)");
@@ -350,7 +325,6 @@ function Globe({ cities, selected, onSelect, reduced }: { cities: City[]; select
       ctx.fillStyle = atm;
       ctx.beginPath(); ctx.arc(cx, cy, R * 1.38, 0, Math.PI * 2); ctx.fill();
 
-      // sphere
       const sph = ctx.createRadialGradient(cx - R * 0.35, cy - R * 0.4, R * 0.1, cx, cy, R);
       sph.addColorStop(0, "#14233f");
       sph.addColorStop(0.65, "#0a1226");
@@ -358,25 +332,21 @@ function Globe({ cities, selected, onSelect, reduced }: { cities: City[]; select
       ctx.fillStyle = sph;
       ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.fill();
 
-      // graticule
       ctx.lineWidth = 0.6;
       ctx.strokeStyle = "rgba(160,190,255,0.10)";
       for (let lon = -180; lon < 180; lon += 30) path(Array.from({ length: 37 }, (_, k) => [lon, -90 + k * 5]), true);
       for (let lat = -60; lat <= 60; lat += 30) path(Array.from({ length: 73 }, (_, k) => [lat, -180 + k * 5]), true);
 
-      // coastlines
       ctx.lineWidth = 0.9;
       ctx.strokeStyle = "rgba(239,233,221,0.42)";
       for (const ring of land.current) path(ring);
 
-      // rim
       ctx.lineWidth = 1;
       ctx.strokeStyle = "rgba(255,190,140,0.28)";
       ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.stroke();
 
-      // cities
       const found: { i: number; x: number; y: number }[] = [];
-      CITIES.forEach((ct, i) => {
+      citiesRef.current.forEach((ct, i) => {
         const q = proj(ct.lat, ct.lon);
         if (q[2] <= 0.02) return;
         const X = cx + R * q[0], Y = cy - R * q[1];
@@ -457,6 +427,8 @@ function Globe({ cities, selected, onSelect, reduced }: { cities: City[]; select
     }
   };
 
+  const hc = hover ? cities[hover.i] : null;
+
   return (
     <div className="relative mx-auto aspect-square w-full max-w-[640px]">
       <canvas
@@ -470,7 +442,7 @@ function Globe({ cities, selected, onSelect, reduced }: { cities: City[]; select
         aria-label="Interactive globe of city surface temperatures"
       />
       <AnimatePresence>
-        {hover && (
+        {hover && hc && (
           <motion.div
             key={hover.i}
             className="wx-tip"
@@ -480,10 +452,10 @@ function Globe({ cities, selected, onSelect, reduced }: { cities: City[]; select
             exit={{ opacity: 0 }}
             transition={{ duration: 0.18 }}
           >
-            <div className="wx-serif text-[15px] text-white">{CITIES[hover.i].name}</div>
+            <div className="wx-serif text-[15px] text-white">{hc.name}</div>
             <div className="mt-0.5 flex items-center gap-3 text-[11px]">
-              <span style={{ color: tempColor(CITIES[hover.i].lst) }}>{CITIES[hover.i].lst.toFixed(1)} °C</span>
-              <span className="text-emerald-300">NDVI {CITIES[hover.i].ndvi.toFixed(2)}</span>
+              <span style={{ color: tempColor(hc.lst) }}>{hc.lst.toFixed(1)} °C</span>
+              <span className="text-emerald-300">NDVI {hc.ndvi.toFixed(2)}</span>
             </div>
           </motion.div>
         )}
@@ -497,18 +469,27 @@ function Globe({ cities, selected, onSelect, reduced }: { cities: City[]; select
 
 /* ───────────────────────── Leaderboard ───────────────────────── */
 
-function Leaderboard({ cities, selected, onSelect }: { cities: City[]; selected: number | null; onSelect: (i: number) => void }) {
+type MetricKey = "lst" | "ndvi" | "uhi";
+const METRICS: Record<MetricKey, { label: string; title: string; unit: string; dir: 1 | -1; get: (x: City) => number; range: [number, number]; color: (v: number) => string; dec: number }> = {
+  lst: { label: "Surface temp", title: "The hottest cities", unit: "°C", dir: -1, get: (x) => x.lst, range: [28, 50], color: tempColor, dec: 1 },
+  ndvi: { label: "Vegetation", title: "The least green cities", unit: "", dir: 1, get: (x) => x.ndvi, range: [0, 0.5], color: ndviColor, dec: 2 },
+  uhi: { label: "Heat island", title: "The strongest heat islands", unit: "°C", dir: -1, get: (x) => x.uhi, range: [0, 6], color: (v) => tempColor(18 + (v / 6) * 30), dec: 1 },
+};
+
+function Leaderboard({ cities, stats, selected, onSelect }: { cities: City[]; stats: Stats; selected: number | null; onSelect: (i: number) => void }) {
   const [metric, setMetric] = useState<MetricKey>("lst");
   const [region, setRegion] = useState<Region | "All">("All");
   const ref = useRef<HTMLUListElement>(null);
   const inView = useInView(ref, { once: true, margin: "-15%" });
   const m = METRICS[metric];
+  const range: [number, number] =
+    metric === "lst" ? [stats.axis.lo, stats.axis.hi] : metric === "uhi" ? [0, Math.max(6, Math.ceil(stats.uhiMax))] : m.range;
 
   const rows = useMemo(() => {
     const list = cities.map((ct, i) => ({ ct, i })).filter(({ ct }) => region === "All" || ct.region === region);
     list.sort((a, b) => (m.get(a.ct) - m.get(b.ct)) * m.dir);
     return list.slice(0, 10);
-  }, [cities, metric, region, m]);
+  }, [cities, region, m]);
 
   return (
     <div>
@@ -548,7 +529,7 @@ function Leaderboard({ cities, selected, onSelect }: { cities: City[]; selected:
         <AnimatePresence initial={false} mode="popLayout">
           {rows.map(({ ct, i }, rank) => {
             const v = m.get(ct);
-            const pct = Math.max(3, Math.min(100, ((v - m.range[0]) / (m.range[1] - m.range[0])) * 100));
+            const pct = Math.max(3, Math.min(100, ((v - range[0]) / (range[1] - range[0])) * 100));
             return (
               <motion.li
                 key={ct.name}
@@ -567,7 +548,7 @@ function Leaderboard({ cities, selected, onSelect }: { cities: City[]; selected:
                   <span className="wx-track">
                     <motion.span
                       className="wx-fill"
-                      style={{ background: `linear-gradient(90deg, ${m.color(m.range[0] + (m.range[1] - m.range[0]) * 0.1)}, ${m.color(v)})` }}
+                      style={{ background: `linear-gradient(90deg, ${m.color(range[0] + (range[1] - range[0]) * 0.1)}, ${m.color(v)})` }}
                       initial={{ width: 0 }}
                       animate={{ width: inView ? `${pct}%` : 0 }}
                       transition={{ duration: 1.1, ease: EASE, delay: 0.1 + rank * 0.05 }}
@@ -587,30 +568,32 @@ function Leaderboard({ cities, selected, onSelect }: { cities: City[]; selected:
   );
 }
 
-type MetricKey = "lst" | "ndvi" | "uhi";
-const METRICS: Record<MetricKey, { label: string; title: string; unit: string; dir: 1 | -1; get: (x: City) => number; range: [number, number]; color: (v: number) => string; dec: number }> = {
-  lst: { label: "Surface temp", title: "The hottest cities", unit: "°C", dir: -1, get: (x) => x.lst, range: [28, 50], color: tempColor, dec: 1 },
-  ndvi: { label: "Vegetation", title: "The least green cities", unit: "", dir: 1, get: (x) => x.ndvi, range: [0, 0.5], color: ndviColor, dec: 2 },
-  uhi: { label: "Heat island", title: "The strongest heat islands", unit: "°C", dir: -1, get: (x) => x.uhi, range: [0, 6], color: (v) => tempColor(28 + (v / 6) * 21), dec: 1 },
-};
-
-
 /* ───────────────────────── Scatter ───────────────────────── */
 
-function Scatter({ cities, stats, selected, onSelect }: { cities: City[]; stats: any; selected: number | null; onSelect: (i: number) => void }) {
+function Scatter({ cities, stats, selected, onSelect }: { cities: City[]; stats: Stats; selected: number | null; onSelect: (i: number) => void }) {
   const ref = useRef<SVGSVGElement>(null);
   const inView = useInView(ref, { once: true, margin: "-20%" });
   const [hov, setHov] = useState<number | null>(null);
   const W = 820, H = 480, L = 62, Rr = 24, T = 22, B = 56;
-  const X0 = 0, X1 = 0.5, Y0 = 26, Y1 = 50;
+  const X0 = 0, X1 = 0.5;
+  const Y0 = stats.axis.lo, Y1 = stats.axis.hi;
   const sx = (v: number) => L + ((v - X0) / (X1 - X0)) * (W - L - Rr);
   const sy = (v: number) => H - B - ((v - Y0) / (Y1 - Y0)) * (H - T - B);
   const line = `M ${sx(0.04)} ${sy(stats.intercept + stats.slope * 0.04)} L ${sx(0.46)} ${sy(stats.intercept + stats.slope * 0.46)}`;
+  const ticks: number[] = [];
+  for (let v = Y0; v <= Y1; v += 4) ticks.push(v);
   const focus = hov ?? selected;
 
   return (
     <svg ref={ref} viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="Scatter plot of surface temperature against vegetation index for each city">
-      {[26, 30, 34, 38, 42, 46, 50].map((v) => (
+      <defs>
+        <linearGradient id="wx-reg" x1="0" x2="1">
+          <stop offset="0" stopColor="#ff8a3d" />
+          <stop offset="1" stopColor="#2ee6c5" />
+        </linearGradient>
+        <clipPath id="wx-clip"><rect x={L} y={T} width={W - L - Rr} height={H - T - B} /></clipPath>
+      </defs>
+      {ticks.map((v) => (
         <g key={v}>
           <line x1={L} x2={W - Rr} y1={sy(v)} y2={sy(v)} className="wx-gl" />
           <text x={L - 12} y={sy(v) + 4} textAnchor="end" className="wx-ax">{v}°</text>
@@ -623,24 +606,20 @@ function Scatter({ cities, stats, selected, onSelect }: { cities: City[]; stats:
         </g>
       ))}
       <text x={(L + W - Rr) / 2} y={H - 8} textAnchor="middle" className="wx-axl">VEGETATION INDEX (NDVI) →</text>
-      <text transform={`translate(16 ${(T + H - B) / 2}) rotate(-90)`} textAnchor="middle" className="wx-axl">SURFACE TEMP °C →</text>
+      <text transform={`translate(16 ${(T + H - B) / 2}) rotate(-90)`} textAnchor="middle" className="wx-axl">PEAK SURFACE TEMP °C →</text>
 
-      <motion.path
-        d={line}
-        fill="none"
-        stroke="url(#wx-reg)"
-        strokeWidth={2}
-        strokeDasharray="6 6"
-        initial={{ pathLength: 0, opacity: 0 }}
-        animate={inView ? { pathLength: 1, opacity: 1 } : {}}
-        transition={{ duration: 1.8, delay: 0.9, ease: EASE }}
-      />
-      <defs>
-        <linearGradient id="wx-reg" x1="0" x2="1">
-          <stop offset="0" stopColor="#ff8a3d" />
-          <stop offset="1" stopColor="#2ee6c5" />
-        </linearGradient>
-      </defs>
+      <g clipPath="url(#wx-clip)">
+        <motion.path
+          d={line}
+          fill="none"
+          stroke="url(#wx-reg)"
+          strokeWidth={2}
+          strokeDasharray="6 6"
+          initial={{ pathLength: 0, opacity: 0 }}
+          animate={inView ? { pathLength: 1, opacity: 1 } : {}}
+          transition={{ duration: 1.8, delay: 0.9, ease: EASE }}
+        />
+      </g>
 
       {cities.map((ct, i) => {
         const active = focus === i;
@@ -662,7 +641,7 @@ function Scatter({ cities, stats, selected, onSelect }: { cities: City[]; stats:
         );
       })}
 
-      {focus != null && (() => {
+      {focus != null && cities[focus] && (() => {
         const ct = cities[focus];
         const x = sx(ct.ndvi), y = sy(ct.lst);
         const right = x < W - 200;
@@ -680,7 +659,69 @@ function Scatter({ cities, stats, selected, onSelect }: { cities: City[]; stats:
 
 /* ───────────────────────── AI Analyst ───────────────────────── */
 
-function AIAnalyst({ stats }: { stats: any }) {
+const r1 = (n: number) => Math.round(n * 10) / 10;
+
+function buildAnalystContext(cities: City[], stats: Stats, regions: RegionStat[], live: LiveState) {
+  const top = (key: (c: City) => number, dir: 1 | -1, n = 5) =>
+    [...cities].sort((a, b) => (key(a) - key(b)) * dir).slice(0, n).map((c) => ({
+      city: c.name, country: c.country, region: c.region, peakSurfaceTempC: r1(c.lst), ndvi: Math.round(c.ndvi * 100) / 100, heatIslandC: r1(c.uhi),
+    }));
+  return {
+    provenance: {
+      isLive: live.ok,
+      surfaceTemperature: live.ok
+        ? `Live modelled surface temperature (${live.source ?? "weather model"}), today's peak per city, updated ${live.updatedAt}`
+        : "Illustrative sample values — the live feed was unavailable",
+      ndvi: "Reference values (not live)",
+      heatIsland: "Reference urban-minus-rural estimates (not live)",
+    },
+    cityCount: stats.n,
+    meanPeakSurfaceTempC: r1(stats.meanLst),
+    meanNdvi: Math.round(stats.meanNdvi * 1000) / 1000,
+    meanHeatIslandC: r1(stats.meanUhi),
+    hottest: top((c) => c.lst, -1),
+    coolest: top((c) => c.lst, 1),
+    strongestHeatIslands: top((c) => c.uhi, -1),
+    leastVegetated: top((c) => c.ndvi, 1),
+    regions: regions.map((r) => ({ region: r.region, cities: r.list.length, meanPeakSurfaceTempC: r1(r.lst), meanNdvi: Math.round(r.ndvi * 100) / 100, meanHeatIslandC: r1(r.uhi), hottestCity: r.list[0].name })),
+    correlationNdviVsPeakTemp: Math.round(stats.r * 100) / 100,
+    estimatedTempChangePerPlus0_1Ndvi: r1(-stats.slope * 0.1),
+  };
+}
+
+function RichText({ text }: { text: string }) {
+  const inline = (s: string) =>
+    s.split(/(\*\*[^*]+\*\*)/g).map((p, i) =>
+      p.startsWith("**") && p.endsWith("**") ? <strong key={i} className="text-white">{p.slice(2, -2)}</strong> : <span key={i}>{p}</span>
+    );
+  return (
+    <div className="space-y-2">
+      {text.split("\n").map((ln, i) => {
+        const t = ln.trim();
+        if (!t) return null;
+        if (/^#{1,3}\s/.test(t)) return <h4 key={i} className="wx-serif mt-6 text-xl text-white first:mt-0">{inline(t.replace(/^#{1,3}\s/, ""))}</h4>;
+        if (/^[-*•]\s/.test(t))
+          return (
+            <div key={i} className="flex gap-3">
+              <span className="mt-[0.72em] h-1 w-1 flex-none rounded-full bg-[var(--wx-ember)]" />
+              <span>{inline(t.replace(/^[-*•]\s/, ""))}</span>
+            </div>
+          );
+        const m = t.match(/^(\d+)[.)]\s(.*)/);
+        if (m)
+          return (
+            <div key={i} className="flex gap-3">
+              <span style={{ fontFamily: "var(--f-mono)" }} className="text-[var(--wx-ember)]">{m[1]}.</span>
+              <span>{inline(m[2])}</span>
+            </div>
+          );
+        return <p key={i}>{inline(t)}</p>;
+      })}
+    </div>
+  );
+}
+
+function AIAnalyst({ context, live }: { context: ReturnType<typeof buildAnalystContext>; live: LiveState }) {
   const [question, setQuestion] = useState("What are the most important heat-risk findings, and what should a city do first?");
   const [answer, setAnswer] = useState("");
   const [busy, setBusy] = useState(false);
@@ -691,42 +732,26 @@ function AIAnalyst({ stats }: { stats: any }) {
     setError("");
     setAnswer("");
     try {
-      const response = await fetch("/api/ai-analyst", {
+      const res = await fetch("/api/ai-analyst", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          question,
-          context: {
-            dataStatus: "Live Earth Engine Telemetry Feed",
-            endpoint: "/api/gee/uhi",
-            cityCount: stats.n,
-            meanSurfaceTemperatureC: Number(stats.meanLst.toFixed(2)),
-            meanNdvi: Number(stats.meanNdvi.toFixed(3)),
-            meanUrbanHeatIslandC: Number(stats.meanUhi.toFixed(2)),
-            hottestCities: [{
-              name: stats.hottest.name,
-              country: stats.hottest.country,
-              lst: stats.hottest.lst,
-              ndvi: stats.hottest.ndvi,
-              uhi: stats.hottest.uhi,
-            }],
-            coolestCities: [{
-              name: stats.coolest.name,
-              country: stats.coolest.country,
-              lst: stats.coolest.lst,
-              ndvi: stats.coolest.ndvi,
-              uhi: stats.coolest.uhi,
-            }],
-            vegetationTemperatureCorrelation: Number(stats.r.toFixed(3)),
-            estimatedTemperatureChangePerNdvi01C: Number((-stats.slope * 0.1).toFixed(2)),
-          },
-        }),
+        body: JSON.stringify({ question, context }),
+        signal: AbortSignal.timeout(45_000),
       });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || "Analysis request failed.");
-      setAnswer(result.answer || "No analysis was returned.");
+      // Read as text first: a missing/crashed route returns an HTML page, not JSON.
+      const raw = await res.text();
+      let result: { answer?: string; error?: string } | null = null;
+      try { result = JSON.parse(raw); } catch { /* not JSON */ }
+
+      if (!res.ok || !result) {
+        if (result?.error) throw new Error(result.error);
+        if (res.status === 404) throw new Error("The analyst endpoint wasn't found. Make sure app/api/ai-analyst/route.ts is included in the deployment.");
+        throw new Error(`The analyst service returned an unexpected response (HTTP ${res.status}).`);
+      }
+      setAnswer(result.answer?.trim() || "No analysis was returned.");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not run the analysis.");
+      const timedOut = e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError");
+      setError(timedOut ? "The analysis took too long. Please try again." : e instanceof Error ? e.message : "Could not run the analysis.");
     } finally {
       setBusy(false);
     }
@@ -738,9 +763,9 @@ function AIAnalyst({ stats }: { stats: any }) {
         <div>
           <div className="wx-eyebrow">05 — TERRAPULSE intelligence</div>
           <h2 className="wx-serif mt-3 text-[clamp(2rem,4.8vw,3.8rem)] leading-tight text-white">Ask the AI analyst<span className="wx-accent">.</span></h2>
-          <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-400">Turn the displayed heat and vegetation indicators into a concise, evidence-aware briefing with priorities and practical next steps.</p>
+          <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-400">Turn the heat and vegetation indicators on this page into a concise, evidence-aware briefing with priorities and practical next steps.</p>
         </div>
-        <span className="wx-ai-status"><span className="wx-dot" /> DATA-AWARE ANALYSIS</span>
+        <span className="wx-ai-status"><span className="wx-dot" /> {live.ok ? "ANALYSING LIVE DATA" : "ANALYSING SAMPLE DATA"}</span>
       </div>
       <div className="mt-8 grid gap-5 lg:grid-cols-[1fr_auto]">
         <label className="block">
@@ -754,20 +779,30 @@ function AIAnalyst({ stats }: { stats: any }) {
         </div>
       </div>
       <div className="mt-3 flex flex-wrap gap-2">
-        {["What should be prioritised first?", "Explain the vegetation–temperature relationship", "Give a 3-step urban cooling plan"].map((q) => (
+        {["What should be prioritised first?", "Explain the vegetation–temperature relationship", "Give a 3-step urban cooling plan", "Which region is most at risk today?"].map((q) => (
           <button key={q} type="button" className="wx-ai-chip" onClick={() => setQuestion(q)}>{q}</button>
         ))}
       </div>
       {busy && <div className="mt-8 flex items-center gap-3 text-sm text-slate-400"><span className="wx-ai-spinner" /> Reviewing indicators and preparing recommendations…</div>}
-      {error && <div role="alert" className="mt-6 rounded-xl border border-rose-400/25 bg-rose-400/[.07] p-4 text-sm text-rose-200">{error}<p className="mt-1 text-xs text-rose-200/70">Check that OPENAI_API_KEY is configured in your server environment and redeploy.</p></div>}
-      {answer && <div className="wx-ai-answer mt-8"><div className="wx-eyebrow">Analyst briefing</div><div className="mt-4 whitespace-pre-wrap text-sm leading-7 text-slate-200">{answer}</div><p className="mt-5 border-t border-white/10 pt-4 text-[11px] leading-5 text-slate-500">Interpretation is limited by the data supplied. City values on this page are illustrative sample figures, not verified current measurements. Treat recommendations as planning guidance, not a substitute for local assessment.</p></div>}
+      {error && <div role="alert" className="mt-6 rounded-xl border border-rose-400/25 bg-rose-400/[.07] p-4 text-sm text-rose-200">{error}</div>}
+      {answer && (
+        <motion.div className="wx-ai-answer mt-8" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, ease: EASE }}>
+          <div className="wx-eyebrow">Analyst briefing</div>
+          <div className="mt-4 text-sm leading-7 text-slate-200"><RichText text={answer} /></div>
+          <p className="mt-5 border-t border-white/10 pt-4 text-[11px] leading-5 text-slate-500">
+            {live.ok
+              ? "Surface temperatures are live modelled values (today's peak); NDVI and heat-island figures are reference values. Treat recommendations as planning guidance, not a substitute for local assessment."
+              : "These figures are illustrative samples, not verified current measurements. Treat recommendations as general guidance."}
+          </p>
+        </motion.div>
+      )}
     </section>
   );
 }
 
 /* ───────────────────────── Pinned horizontal region scroller ───────────────────────── */
 
-function RegionScroller({ onSelect }: { onSelect: (i: number) => void }) {
+function RegionScroller({ cities, regionStats, stats, onSelect }: { cities: City[]; regionStats: RegionStat[]; stats: Stats; onSelect: (i: number) => void }) {
   const sec = useRef<HTMLDivElement>(null);
   const track = useRef<HTMLDivElement>(null);
   const [dist, setDist] = useState(0);
@@ -785,7 +820,8 @@ function RegionScroller({ onSelect }: { onSelect: (i: number) => void }) {
   const { scrollYProgress } = useScroll({ target: sec, offset: ["start start", "end end"] });
   const x = useTransform(scrollYProgress, [0, 1], [0, -dist]);
   const bar = useSpring(scrollYProgress, { stiffness: 140, damping: 30 });
-  const maxR = Math.max(...REGION_STATS.map((r) => r.lst));
+  const maxR = Math.max(...regionStats.map((r) => r.lst));
+  const { lo, hi } = stats.axis;
 
   return (
     <section ref={sec} style={{ height: dist ? dist + vh : "320vh" }} className="relative" aria-label="Regional breakdown">
@@ -796,7 +832,7 @@ function RegionScroller({ onSelect }: { onSelect: (i: number) => void }) {
         </div>
 
         <motion.div ref={track} style={{ x }} className="mt-10 flex gap-6 pl-[max(1.5rem,calc((100vw-80rem)/2+2.5rem))] pr-[10vw] will-change-transform">
-          {REGION_STATS.map((rg, k) => (
+          {regionStats.map((rg, k) => (
             <article key={rg.region} className="wx-region">
               <div className="flex items-start justify-between">
                 <div>
@@ -808,7 +844,7 @@ function RegionScroller({ onSelect }: { onSelect: (i: number) => void }) {
                     <CountUp value={rg.lst} decimals={1} duration={1.4} />
                     <span className="text-[1.3rem] opacity-70">°C</span>
                   </div>
-                  <div className="mt-1 text-[11px] text-slate-500">mean surface temp</div>
+                  <div className="mt-1 text-[11px] text-slate-500">mean peak surface temp</div>
                 </div>
               </div>
 
@@ -831,14 +867,14 @@ function RegionScroller({ onSelect }: { onSelect: (i: number) => void }) {
 
               <div className="mt-6 space-y-1.5">
                 {rg.list.slice(0, 5).map((ct, j) => (
-                  <button key={ct.name} onClick={() => onSelect(CITIES.indexOf(ct))} className="wx-mini">
+                  <button key={ct.name} onClick={() => onSelect(cities.findIndex((c) => c.name === ct.name))} className="wx-mini">
                     <span className="w-28 truncate text-left text-[12px] text-slate-300">{ct.name}</span>
                     <span className="h-[3px] flex-1 overflow-hidden rounded-full bg-white/[0.06]">
                       <motion.span
                         className="block h-full rounded-full"
                         style={{ background: tempColor(ct.lst) }}
                         initial={{ width: 0 }}
-                        whileInView={{ width: `${((ct.lst - 26) / 24) * 100}%` }}
+                        whileInView={{ width: `${Math.max(2, Math.min(100, ((ct.lst - lo) / (hi - lo)) * 100))}%` }}
                         viewport={{ once: true }}
                         transition={{ duration: 1, delay: 0.2 + j * 0.08, ease: EASE }}
                       />
@@ -863,10 +899,10 @@ function RegionScroller({ onSelect }: { onSelect: (i: number) => void }) {
 
 /* ───────────────────────── City dock ───────────────────────── */
 
-function CityDock({ index, onClose }: { index: number | null; onClose: () => void }) {
-  const ct = index != null ? CITIES[index] : null;
+function CityDock({ cities, stats, index, onClose }: { cities: City[]; stats: Stats; index: number | null; onClose: () => void }) {
+  const ct = index != null ? cities[index] : null;
   const risk = ct ? riskOf(ct.lst) : null;
-  const cooling = -STATS.slope * 0.1; // °C cooler per +0.10 NDVI (sample regression)
+  const cooling = -stats.slope * 0.1;
   return (
     <AnimatePresence>
       {ct && risk && (
@@ -887,16 +923,26 @@ function CityDock({ index, onClose }: { index: number | null; onClose: () => voi
             <button onClick={onClose} aria-label="Close" className="text-slate-500 transition hover:rotate-90 hover:text-white">✕</button>
           </div>
           <div className="mt-5 grid grid-cols-3 gap-3">
-            <div><div className="wx-serif text-[1.8rem] leading-none" style={{ color: tempColor(ct.lst) }}>{ct.lst.toFixed(1)}°</div><div className="mt-1 text-[10px] text-slate-500">Surface temp</div></div>
+            <div><div className="wx-serif text-[1.8rem] leading-none" style={{ color: tempColor(ct.lst) }}>{ct.lst.toFixed(1)}°</div><div className="mt-1 text-[10px] text-slate-500">Peak surface</div></div>
             <div><div className="wx-serif text-[1.8rem] leading-none text-emerald-300">{ct.ndvi.toFixed(2)}</div><div className="mt-1 text-[10px] text-slate-500">NDVI</div></div>
             <div><div className="wx-serif text-[1.8rem] leading-none text-orange-300">+{ct.uhi.toFixed(1)}°</div><div className="mt-1 text-[10px] text-slate-500">Heat island</div></div>
           </div>
-          <div className="mt-5 flex items-center gap-2 text-[11px]">
+          {ct.lstNow != null && (
+            <div className="mt-4 flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-[11px]">
+              <span className="flex items-center gap-2 text-slate-400"><span className="wx-dot" />Right now</span>
+              <span className="text-white">surface {ct.lstNow.toFixed(1)}°{ct.airNow != null ? ` · air ${ct.airNow.toFixed(1)}°` : ""}</span>
+            </div>
+          )}
+          <div className="mt-4 flex flex-wrap items-center gap-2 text-[11px]">
             <span className="rounded-full border px-2.5 py-1 font-bold" style={{ color: risk.c, borderColor: `${risk.c}66`, background: `${risk.c}14` }}>{risk.label} heat</span>
-            <span className="text-slate-500">vs {STATS.meanLst.toFixed(1)}° sample mean: {ct.lst - STATS.meanLst >= 0 ? "+" : ""}{(ct.lst - STATS.meanLst).toFixed(1)}°</span>
+            <span className="text-slate-500">vs {stats.meanLst.toFixed(1)}° mean: {ct.lst - stats.meanLst >= 0 ? "+" : ""}{(ct.lst - stats.meanLst).toFixed(1)}°</span>
           </div>
           <p className="mt-4 text-[12px] leading-relaxed text-slate-400">
-            Across this sample, each +0.10 NDVI goes with roughly <span className="text-white">{cooling.toFixed(1)} °C</span> cooler surfaces. Indicative only — correlation, not a forecast.
+            {stats.r <= -0.4 ? (
+              <>Across these cities, each +0.10 NDVI goes with roughly <span className="text-white">{cooling.toFixed(1)} °C</span> cooler peak surfaces. Indicative only — correlation, not a forecast.</>
+            ) : (
+              <>Peak surface temperature also depends on climate and season, so the vegetation link is weak in today&apos;s snapshot.</>
+            )}
           </p>
           <Link href="/explore" className="wx-btn mt-5 w-full justify-center">Open the explorer →</Link>
         </motion.aside>
@@ -912,61 +958,45 @@ export default function InsightsPage() {
   const [sel, setSel] = useState<number | null>(null);
   const onSelect = useCallback((i: number) => setSel(i), []);
 
-  // 1. Dynamic state for Earth Engine live telemetry
-  const [citiesData, setCitiesData] = useState<City[]>(CITIES);
-  const [isLive, setIsLive] = useState(false);
+  const [cities, setCities] = useState<City[]>(CITIES);
+  const [live, setLive] = useState<LiveState>({ ok: false, loading: true, updatedAt: null, source: null, liveCount: 0, error: null });
 
-  // 2. Fetch telemetry from GEE route on mount
-  useEffect(() => {
-    async function fetchLiveTelemetry() {
-      try {
-        const res = await fetch("/api/gee/uhi");
-        if (!res.ok) throw new Error("Telemetry offline");
-        const json = await res.json();
-
-        if (json.cities && Array.isArray(json.cities) && json.cities.length > 0) {
-          setCitiesData(json.cities);
-          setIsLive(true);
-        } else if (json.uhi_hotspots && Array.isArray(json.uhi_hotspots)) {
-          const mappedCities: City[] = json.uhi_hotspots.map((cell: any) => ({
-            name: `Cell ${cell.id ? String(cell.id).slice(0, 6) : "Hotspot"}`,
-            country: "Telemetry Zone",
-            region: "Asia" as Region,
-            lat: cell.lat ?? 13.08,
-            lon: cell.lon ?? 80.27,
-            lst: cell.lst_mean ?? cell.lst ?? 38.12,
-            ndvi: cell.ndvi_mean ?? cell.ndvi ?? 0.342,
-            uhi: Number(((cell.lst_mean ?? 38.12) - 35.0).toFixed(1)),
-          }));
-          setCitiesData(mappedCities);
-          setIsLive(true);
-        }
-      } catch (err) {
-        console.warn("Using fallback sample data:", err);
-        setIsLive(false);
+  const load = useCallback(async () => {
+    setLive((l) => ({ ...l, loading: true }));
+    try {
+      const res = await fetch("/api/live/cities", { cache: "no-store" });
+      const raw = await res.text();
+      let json: { cities?: City[]; updatedAt?: string; source?: string; liveCount?: number; error?: string } | null = null;
+      try { json = JSON.parse(raw); } catch { /* not JSON */ }
+      if (!res.ok || !json || !Array.isArray(json.cities) || json.cities.length === 0) {
+        throw new Error(json?.error ?? `Live feed returned HTTP ${res.status}`);
       }
+      setCities(json.cities);
+      setLive({
+        ok: true,
+        loading: false,
+        updatedAt: json.updatedAt ?? new Date().toISOString(),
+        source: json.source ?? null,
+        liveCount: json.liveCount ?? json.cities.length,
+        error: null,
+      });
+    } catch (e) {
+      // keep whatever we last had (live data stays on screen if a refresh fails)
+      setLive((l) => ({ ...l, loading: false, error: e instanceof Error ? e.message : "Live feed unavailable" }));
     }
-    fetchLiveTelemetry();
   }, []);
 
-  // 3. Recompute statistics dynamic state
-  const currentStats = useMemo(() => {
-    const lst = citiesData.map((x) => x.lst);
-    const ndvi = citiesData.map((x) => x.ndvi);
-    const uhi = citiesData.map((x) => x.uhi);
-    const hottest = citiesData.reduce((a, b) => (b.lst > a.lst ? b : a), citiesData[0]);
-    const coolest = citiesData.reduce((a, b) => (b.lst < a.lst ? b : a), citiesData[0]);
-    return {
-      n: citiesData.length,
-      meanLst: avg(lst),
-      meanNdvi: avg(ndvi),
-      meanUhi: avg(uhi),
-      hottest,
-      coolest,
-      r: pearson(ndvi, lst) || -0.75,
-      ...regress(ndvi, lst),
-    };
-  }, [citiesData]);
+  useEffect(() => {
+    load();
+    const t = setInterval(load, 5 * 60 * 1000);
+    const onVis = () => { if (document.visibilityState === "visible") load(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => { clearInterval(t); document.removeEventListener("visibilitychange", onVis); };
+  }, [load]);
+
+  const stats = useMemo(() => computeStats(cities), [cities]);
+  const regionStats = useMemo(() => computeRegionStats(cities), [cities]);
+  const analystContext = useMemo(() => buildAnalystContext(cities, stats, regionStats, live), [cities, stats, regionStats, live]);
 
   const hero = useRef<HTMLElement>(null);
   const { scrollYProgress } = useScroll({ target: hero, offset: ["start start", "end start"] });
@@ -982,14 +1012,19 @@ export default function InsightsPage() {
   }, []);
 
   const ticker = [
-    `Mean surface temp ${currentStats.meanLst.toFixed(1)} °C`,
-    `Hottest ${currentStats.hottest.name} ${currentStats.hottest.lst.toFixed(1)} °C`,
-    `Coolest ${currentStats.coolest.name} ${currentStats.coolest.lst.toFixed(1)} °C`,
-    `Mean NDVI ${currentStats.meanNdvi.toFixed(2)}`,
-    `Mean heat island +${currentStats.meanUhi.toFixed(1)} °C`,
-    `LST / NDVI r = ${currentStats.r.toFixed(2)}`,
-    `${currentStats.n} locations · 6 regions`,
+    live.ok ? `Live · updated ${fmtTime(live.updatedAt)}` : "Sample data",
+    `Mean peak surface temp ${stats.meanLst.toFixed(1)} °C`,
+    `Hottest ${stats.hottest.name} ${stats.hottest.lst.toFixed(1)} °C`,
+    `Coolest ${stats.coolest.name} ${stats.coolest.lst.toFixed(1)} °C`,
+    `Mean NDVI ${stats.meanNdvi.toFixed(2)}`,
+    `Mean heat island +${stats.meanUhi.toFixed(1)} °C`,
+    `LST / NDVI r = ${stats.r.toFixed(2)}`,
+    `${stats.n} cities · 6 regions`,
   ];
+
+  const dataNote = live.ok
+    ? `Surface temperature is live — today's peak from the ${live.source ?? "weather model"}, refreshed every 5 minutes (${live.liveCount}/${stats.n} cities). NDVI and heat-island values are reference figures until Earth Engine is connected.`
+    : "Showing illustrative sample values — the live feed couldn't be reached. It retries automatically.";
 
   return (
     <main className={`wx-root ${display.variable} ${sans.variable} ${mono.variable}`}>
@@ -1010,10 +1045,13 @@ export default function InsightsPage() {
         <motion.div style={{ y: textY, opacity: textO }}>
           <motion.div initial={{ opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.8, delay: 0.1 }} className="flex flex-wrap items-center gap-3">
             <span className="wx-badge"><span className="wx-dot" />Global edition</span>
-            <span className={`wx-badge ${isLive ? "" : "amber"}`}>
-              {isLive && <span className="wx-dot" />}
-              {isLive ? "Live Earth Engine Telemetry" : "Illustrative Sample Data"}
+            <span className={`wx-badge ${live.ok ? "" : "amber"}`}>
+              {live.ok && <span className="wx-dot" />}
+              {live.ok ? `Live · updated ${fmtTime(live.updatedAt)}` : live.loading ? "Connecting to live feed…" : "Sample data · live feed unavailable"}
             </span>
+            <button type="button" onClick={load} disabled={live.loading} className="wx-badge wx-refresh" aria-label="Refresh live data">
+              <span className={live.loading ? "wx-ai-spinner" : ""}>{live.loading ? "" : "↻"}</span> Refresh
+            </button>
           </motion.div>
 
           <SplitHeading
@@ -1030,7 +1068,7 @@ export default function InsightsPage() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 1, delay: 1.1, ease: EASE }}
           >
-            A worldwide read on urban surface heat and vegetation. {STATS.n} cities across six regions, measured on one shared scale — from the cooling shade of Bogotá to the furnace of Dubai.
+            A worldwide read on urban surface heat and vegetation. {stats.n} cities across six regions, measured on one shared scale — from {stats.coolest.name}&apos;s cooler surfaces to {stats.hottest.name}&apos;s furnace.
           </motion.p>
 
           <motion.div className="mt-10 flex flex-wrap items-center gap-4" initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 1, delay: 1.3, ease: EASE }}>
@@ -1040,22 +1078,22 @@ export default function InsightsPage() {
 
           <motion.div className="mt-14 flex flex-wrap gap-x-12 gap-y-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 1.2, delay: 1.6 }}>
             <div>
-              <div className="wx-serif text-[2.6rem] leading-none text-white"><CountUp value={STATS.n} duration={2} /></div>
+              <div className="wx-serif text-[2.6rem] leading-none text-white"><CountUp value={stats.n} duration={2} /></div>
               <div className="mt-2 text-[11px] text-slate-500">Cities compared</div>
             </div>
             <div>
-              <div className="wx-serif text-[2.6rem] leading-none" style={{ color: tempColor(STATS.meanLst) }}><CountUp value={STATS.meanLst} decimals={1} duration={2} /><span className="text-xl opacity-70">°C</span></div>
-              <div className="mt-2 text-[11px] text-slate-500">Mean surface temp</div>
+              <div className="wx-serif text-[2.6rem] leading-none" style={{ color: tempColor(stats.meanLst) }}><CountUp value={stats.meanLst} decimals={1} duration={2} /><span className="text-xl opacity-70">°C</span></div>
+              <div className="mt-2 text-[11px] text-slate-500">Mean peak surface temp</div>
             </div>
             <div>
-              <div className="wx-serif text-[2.6rem] leading-none text-orange-300">+<CountUp value={STATS.meanUhi} decimals={1} duration={2} /><span className="text-xl opacity-70">°C</span></div>
+              <div className="wx-serif text-[2.6rem] leading-none text-orange-300">+<CountUp value={stats.meanUhi} decimals={1} duration={2} /><span className="text-xl opacity-70">°C</span></div>
               <div className="mt-2 text-[11px] text-slate-500">Average heat-island effect</div>
             </div>
           </motion.div>
         </motion.div>
 
         <motion.div style={{ y: globeY, scale: globeS }} initial={{ opacity: 0, scale: 0.88 }} animate={{ opacity: 1 }} transition={{ duration: 1.4, delay: 0.4, ease: EASE }}>
-          <Globe cities={CITIES} selected={sel} onSelect={onSelect} reduced={reduced} />
+          <Globe cities={cities} selected={sel} onSelect={onSelect} reduced={reduced} />
         </motion.div>
 
         <div className="wx-scroll-cue" aria-hidden>
@@ -1082,12 +1120,13 @@ export default function InsightsPage() {
         <section>
           <Reveal><div className="wx-eyebrow">01 — Global vitals</div></Reveal>
           <SplitHeading text="Four numbers that frame a warming urban world." accent={["warming"]} className="wx-serif mt-4 max-w-4xl text-[clamp(2rem,5vw,4rem)] leading-[1.04] text-white" />
-          <div className="mt-14 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Reveal delay={0.15}><p className="wx-note mt-6">{dataNote}</p></Reveal>
+          <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {[
-              { l: "Hottest city", v: STATS.hottest.lst, d: 1, u: "°C", s: `${STATS.hottest.name}, ${STATS.hottest.country}`, col: "#ff3b30", g: "255,59,48" },
-              { l: "Coolest city", v: STATS.coolest.lst, d: 1, u: "°C", s: `${STATS.coolest.name}, ${STATS.coolest.country}`, col: "#4aa3ff", g: "74,163,255" },
-              { l: "Spread", v: STATS.hottest.lst - STATS.coolest.lst, d: 1, u: "°C", s: "Between hottest and coolest", col: "#ffd166", g: "255,209,102" },
-              { l: "Heat vs. green", v: STATS.r, d: 2, u: "", s: "LST / NDVI correlation (r)", col: "#2ee6c5", g: "46,230,197" },
+              { l: "Hottest city", v: stats.hottest.lst, d: 1, u: "°C", s: `${stats.hottest.name}, ${stats.hottest.country}`, col: "#ff3b30", g: "255,59,48" },
+              { l: "Coolest city", v: stats.coolest.lst, d: 1, u: "°C", s: `${stats.coolest.name}, ${stats.coolest.country}`, col: "#4aa3ff", g: "74,163,255" },
+              { l: "Spread", v: stats.hottest.lst - stats.coolest.lst, d: 1, u: "°C", s: "Between hottest and coolest", col: "#ffd166", g: "255,209,102" },
+              { l: "Heat vs. green", v: stats.r, d: 2, u: "", s: "Peak temp / NDVI correlation (r)", col: "#2ee6c5", g: "46,230,197" },
             ].map((k, i) => (
               <Reveal key={k.l} delay={i * 0.09}>
                 <SpotlightCard glow={k.g} className="h-full">
@@ -1109,7 +1148,7 @@ export default function InsightsPage() {
           <div className="mt-4 mb-14 max-w-3xl">
             <SplitHeading text="Rank the world by what matters to you." accent={["world"]} className="wx-serif text-[clamp(2rem,5vw,4rem)] leading-[1.04] text-white" />
           </div>
-          <Leaderboard cities={citiesData} selected={sel} onSelect={onSelect} />
+          <Leaderboard cities={cities} stats={stats} selected={sel} onSelect={onSelect} />
         </section>
 
         {/* ─────── SCATTER ─────── */}
@@ -1119,28 +1158,37 @@ export default function InsightsPage() {
             <SplitHeading text="Where there is green, there is cool." accent={["cool."]} className="wx-serif mt-4 text-[clamp(2rem,4.4vw,3.4rem)] leading-[1.05] text-white" />
             <Reveal delay={0.2}>
               <p className="mt-6 text-[14px] leading-[1.8] text-slate-400">
-                Each dot is a city. Cities with more vegetation sit lower on the chart — their surfaces run cooler. Across this sample the correlation is{" "}
-                <span className="text-white">r = {STATS.r.toFixed(2)}</span>, roughly{" "}
-                <span className="text-white">{(-STATS.slope * 0.1).toFixed(1)} °C</span> cooler per +0.10 NDVI.
+                {stats.r <= -0.4 ? (
+                  <>
+                    Each dot is a city. Cities with more vegetation sit lower on the chart — their surfaces run cooler. The correlation is{" "}
+                    <span className="text-white">r = {stats.r.toFixed(2)}</span>, roughly{" "}
+                    <span className="text-white">{(-stats.slope * 0.1).toFixed(1)} °C</span> cooler per +0.10 NDVI.
+                  </>
+                ) : (
+                  <>
+                    Each dot is a city. In this snapshot the link between vegetation and peak surface temperature is weak (
+                    <span className="text-white">r = {stats.r.toFixed(2)}</span>) — climate, season and local weather dominate, so read it alongside the rankings.
+                  </>
+                )}
               </p>
               <p className="mt-4 text-[12px] text-slate-500">Dot size = heat-island strength. Hover to read, click to open a city.</p>
             </Reveal>
           </div>
           <Reveal className="lg:col-span-8" delay={0.1}>
             <div className="wx-panel p-4 md:p-8">
-              <Scatter cities={citiesData} stats={currentStats} selected={sel} onSelect={onSelect} />
+              <Scatter cities={cities} stats={stats} selected={sel} onSelect={onSelect} />
             </div>
           </Reveal>
         </section>
       </div>
 
       <div className="relative z-10 mx-auto max-w-7xl px-6 md:px-10">
-        <AIAnalyst stats={currentStats} />
+        <AIAnalyst context={analystContext} live={live} />
       </div>
 
       {/* ─────── PINNED REGION SCROLLER ─────── */}
       <div className="relative z-10">
-        <RegionScroller onSelect={onSelect} />
+        <RegionScroller cities={cities} regionStats={regionStats} stats={stats} onSelect={onSelect} />
       </div>
 
       {/* ─────── CLOSING ─────── */}
@@ -1162,12 +1210,10 @@ export default function InsightsPage() {
             </div>
           </div>
         </Reveal>
-        <p className="mt-10 text-center text-[11px] leading-relaxed text-slate-600">
-          City figures on this page are rounded, illustrative sample values (Chennai uses your pipeline's means) to demonstrate the global layout. Connect Earth Engine to replace them with measured composites.
-        </p>
+        <p className="mt-10 text-center text-[11px] leading-relaxed text-slate-600">{dataNote}</p>
       </div>
 
-      <CityDock index={sel} onClose={() => setSel(null)} />
+      <CityDock cities={cities} stats={stats} index={sel} onClose={() => setSel(null)} />
     </main>
   );
 }
@@ -1182,6 +1228,7 @@ const css = `
 .wx-root .text-slate-500,.wx-root .text-slate-400{letter-spacing:.005em}
 .wx-eyebrow{font-family:var(--f-mono),monospace;font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:#7c8799}
 .wx-root button,.wx-root .wx-row,.wx-root [class*="wx-mini"],.wx-val,.wx-rank,.wx-tip,.wx-hint,.wx-ax,.wx-axl,.wx-svg-t,.wx-svg-s{font-family:var(--f-mono),monospace}
+.wx-note{max-width:46rem;font-size:12px;line-height:1.8;color:#8b97ab;border-left:2px solid rgba(255,138,61,.5);padding-left:14px}
 
 /* words */
 .wx-mask{display:inline-block;overflow:hidden;vertical-align:top;padding:.04em .08em .14em 0;margin-right:.24em}
@@ -1207,6 +1254,9 @@ const css = `
 .wx-badge{display:inline-flex;align-items:center;gap:10px;font-family:var(--f-mono),monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#a3afc2;
   border:1px solid rgba(255,255,255,.14);padding:7px 14px;border-radius:999px;background:rgba(255,255,255,.03);backdrop-filter:blur(8px)}
 .wx-badge.amber{color:#ffc27a;border-color:rgba(255,194,122,.3)}
+.wx-refresh{cursor:pointer;transition:border-color .3s,color .3s}
+.wx-refresh:hover:not(:disabled){border-color:rgba(46,230,197,.6);color:#b8fff0}
+.wx-refresh:disabled{opacity:.7;cursor:default}
 .wx-dot{width:7px;height:7px;border-radius:50%;background:#2ee6c5;animation:wx-ping 1.8s infinite}
 @keyframes wx-ping{0%{box-shadow:0 0 0 0 rgba(46,230,197,.6)}100%{box-shadow:0 0 0 10px rgba(46,230,197,0)}}
 .wx-btn{position:relative;isolation:isolate;overflow:hidden;display:inline-flex;align-items:center;gap:10px;font-family:var(--f-mono),monospace;font-size:12px;letter-spacing:.1em;text-transform:uppercase;
@@ -1291,7 +1341,7 @@ const css = `
 .wx-ai-chip{border:1px solid rgba(255,255,255,.1);border-radius:999px;padding:8px 12px;color:#9ca9bc;font:10px var(--f-mono),monospace;transition:all .2s}
 .wx-ai-chip:hover{border-color:rgba(46,230,197,.4);color:#b8fff0;background:rgba(46,230,197,.05)}
 .wx-ai-answer{border:1px solid rgba(46,230,197,.2);border-radius:18px;padding:22px;background:rgba(2,8,15,.65)}
-.wx-ai-spinner{width:17px;height:17px;border:2px solid rgba(46,230,197,.2);border-top-color:#2ee6c5;border-radius:50%;animation:wx-spin .8s linear infinite}
+.wx-ai-spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(46,230,197,.2);border-top-color:#2ee6c5;border-radius:50%;animation:wx-spin .8s linear infinite}
 @keyframes wx-spin{to{transform:rotate(360deg)}}
 
 /* closing */
