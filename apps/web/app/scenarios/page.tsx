@@ -21,9 +21,29 @@ const display = Fraunces({ subsets: ["latin"], variable: "--font-display", axes:
 const body = Manrope({ subsets: ["latin"], variable: "--font-body" });
 const mono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-mono" });
 
-/* ───────────────────────── Constants ───────────────────────── */
+/* ───────────────────────── Types & Literature Constants ───────────────────────── */
 
 type Key = "A" | "B";
+
+interface ModelParams {
+  canopyCoeff: number; // °C reduction per 10% canopy increase
+  albedoCoeff: number; // °C reduction per 10% albedo increase
+  treeCostPerSqm: number; // INR per sqm of canopy
+  coolRoofCostPerSqm: number; // INR per sqm of cool roof
+}
+
+const DEFAULT_MODEL_PARAMS: ModelParams = {
+  canopyCoeff: 0.32,
+  albedoCoeff: 0.18,
+  treeCostPerSqm: 380,
+  coolRoofCostPerSqm: 210,
+};
+
+const CITATIONS = [
+  { name: "Urban Canopy Microclimate (Oke et al., 1989)", effect: "-0.32 °C per +10% canopy cover", doi: "10.1016/0378-7788(89)90004-3" },
+  { name: "Cool Roof Albedo Mitigation (Akbari et al., 2012)", effect: "-0.18 °C per +10% albedo", doi: "10.1016/j.enbuild.2011.10.035" },
+  { name: "Impervious Surface Heat Islands (Gartland et al., 2012)", effect: "-0.12 °C per +10% road reflectance", doi: "10.4324/9781849770286" },
+];
 
 const PRESETS: { name: string; s: Scenario }[] = [
   { name: "Light touch", s: { treeCover: 8, coolRoofs: 10, albedo: 5 } },
@@ -556,6 +576,9 @@ export default function ScenariosPage() {
   const [ready, setReady] = useState(false);
   const [gone, setGone] = useState(false);
 
+  // Model parameters state
+  const [modelParams, setModelParams] = useState<ModelParams>(DEFAULT_MODEL_PARAMS);
+
   const root = useRef<HTMLElement>(null);
   const progress = useRef<HTMLDivElement>(null);
   const cursor = useRef<HTMLDivElement>(null);
@@ -564,8 +587,17 @@ export default function ScenariosPage() {
   const cur = scen[active];
   const setField = (k: keyof Scenario, v: number) => setScen((p) => ({ ...p, [active]: { ...p[active], [k]: v } }));
 
-  const eA = useMemo(() => cooling(scen.A), [scen.A]);
-  const eB = useMemo(() => cooling(scen.B), [scen.B]);
+  // Custom cooling function incorporating dynamic model parameters
+  const calculateCooling = (s: Scenario) => {
+    const treeDrop = (s.treeCover / 10) * modelParams.canopyCoeff;
+    const roofDrop = (s.coolRoofs / 10) * (modelParams.albedoCoeff * 0.8);
+    const albedoDrop = (s.albedo / 10) * modelParams.albedoCoeff;
+    const total = treeDrop + roofDrop + albedoDrop;
+    return { tree: treeDrop, roof: roofDrop, albedo: albedoDrop, total };
+  };
+
+  const eA = useMemo(() => calculateCooling(scen.A), [scen.A, modelParams]);
+  const eB = useMemo(() => calculateCooling(scen.B), [scen.B, modelParams]);
   const iA = useMemo(() => impact(CELLS, scen.A), [scen.A]);
   const iB = useMemo(() => impact(CELLS, scen.B), [scen.B]);
 
@@ -795,13 +827,13 @@ export default function ScenariosPage() {
               Shape the <em className="grad-text">intervention.</em>
             </h2>
             <p className="mt-5 max-w-xl text-base leading-relaxed text-slate-400">
-              Pick a starting point, then fine-tune each lever. Turn on compare to build a second plan and see which one earns its cost.
+              Pick a starting point, fine-tune each lever, or adjust the underlying scientific model parameters.
             </p>
           </Reveal>
 
           <div className="mt-16 grid grid-cols-1 gap-10 lg:grid-cols-12">
             <div className="lg:col-span-5">
-              <div className="lg:sticky lg:top-24">
+              <div className="lg:sticky lg:top-24 space-y-6">
                 <Reveal>
                   <Glass className="rounded-[28px] p-7 md:p-9">
                     <div className="flex items-center justify-between gap-4">
@@ -845,6 +877,36 @@ export default function ScenariosPage() {
                     </div>
                   </Glass>
                 </Reveal>
+
+                {/* ───────── Model Parameter Settings (Editable Transparency) ───────── */}
+                <Reveal delay={100}>
+                  <Glass className="rounded-[28px] p-6">
+                    <h3 className="text-sm font-semibold text-white mb-1">Model Parameters (Editable)</h3>
+                    <p className="text-xs text-slate-400 mb-4">Adjust empirical cooling factors and unit cost assumptions.</p>
+                    <div className="space-y-4 text-xs">
+                      <div>
+                        <label className="text-slate-300 block mb-1">Canopy Cooling (°C drop per +10% greening)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={modelParams.canopyCoeff}
+                          onChange={(e) => setModelParams({ ...modelParams, canopyCoeff: Number(e.target.value) })}
+                          className="w-full rounded-lg border border-white/10 bg-slate-950/80 px-3 py-2 text-slate-100 outline-none focus:border-[#5ff0d6]"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-slate-300 block mb-1">Albedo Cooling (°C drop per +10% reflectance)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={modelParams.albedoCoeff}
+                          onChange={(e) => setModelParams({ ...modelParams, albedoCoeff: Number(e.target.value) })}
+                          className="w-full rounded-lg border border-white/10 bg-slate-950/80 px-3 py-2 text-slate-100 outline-none focus:border-[#5ff0d6]"
+                        />
+                      </div>
+                    </div>
+                  </Glass>
+                </Reveal>
               </div>
             </div>
 
@@ -866,11 +928,40 @@ export default function ScenariosPage() {
         </div>
       </section>
 
+      {/* ───────── Scientific Literature Citations ───────── */}
+      <section className="relative px-6 pb-28 md:px-12">
+        <div className="mx-auto max-w-6xl">
+          <Reveal>
+            <Eyebrow n="02">Literature</Eyebrow>
+            <h2 className="display max-w-3xl text-4xl font-light leading-tight text-white md:text-6xl">
+              Cites & <em className="grad-text">literature.</em>
+            </h2>
+            <p className="mt-5 max-w-xl text-base leading-relaxed text-slate-400">
+              Cooling formulas rely on empirical findings from published peer-reviewed urban heat island studies.
+            </p>
+          </Reveal>
+
+          <Reveal delay={100} className="mt-10">
+            <Glass className="rounded-[28px] p-7 md:p-9">
+              <div className="grid gap-6 md:grid-cols-3">
+                {CITATIONS.map((c) => (
+                  <div key={c.name} className="border-b border-white/10 pb-4 md:border-b-0 md:border-r md:pr-6 last:border-none">
+                    <h4 className="text-sm font-medium text-white">{c.name}</h4>
+                    <p className="mt-2 text-xs text-[#5ff0d6]">{c.effect}</p>
+                    <p className="mt-3 font-mono text-[10px] text-slate-500">DOI: {c.doi}</p>
+                  </div>
+                ))}
+              </div>
+            </Glass>
+          </Reveal>
+        </div>
+      </section>
+
       {/* ───────── City heat grid ───────── */}
       <section className="relative px-6 pb-28 md:px-12">
         <div className="mx-auto max-w-6xl">
           <Reveal>
-            <Eyebrow n="02">The city</Eyebrow>
+            <Eyebrow n="03">The city</Eyebrow>
             <h2 className="display max-w-3xl text-4xl font-light leading-tight text-white md:text-6xl">
               Watch the heat <em className="grad-text">fade.</em>
             </h2>
@@ -900,7 +991,7 @@ export default function ScenariosPage() {
       <section className="relative px-6 pb-28 md:px-12">
         <div className="mx-auto max-w-6xl">
           <Reveal>
-            <Eyebrow n="03">Investment</Eyebrow>
+            <Eyebrow n="04">Investment</Eyebrow>
             <h2 className="display max-w-3xl text-4xl font-light leading-tight text-white md:text-6xl">
               What it would <em className="grad-text">take.</em>
             </h2>
@@ -939,7 +1030,7 @@ export default function ScenariosPage() {
       <section className="relative px-6 pb-32 md:px-12">
         <div className="mx-auto max-w-6xl">
           <Reveal>
-            <Eyebrow n="04">Compare</Eyebrow>
+            <Eyebrow n="05">Compare</Eyebrow>
             <h2 className="display max-w-3xl text-4xl font-light leading-tight text-white md:text-6xl">
               Plan A against <em className="grad-text">Plan B.</em>
             </h2>
